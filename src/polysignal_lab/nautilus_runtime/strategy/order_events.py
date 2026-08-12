@@ -4,11 +4,10 @@ from collections.abc import Iterable, Mapping
 import math
 from typing import Protocol, cast
 
-from nautilus_trader.core.nautilus_pyo3 import PositionId
-
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.projections import _tags
 from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     fill_side,
@@ -18,6 +17,9 @@ from polysignal_lab.nautilus_runtime.strategy.event_projection import (
 )
 from polysignal_lab.reporting.exit_result import report_result_from_early_exit
 from polysignal_lab.utils import utc_iso
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+PositionId = _pyo3.PositionId
 
 
 class _OrderEventStrategy(Protocol):

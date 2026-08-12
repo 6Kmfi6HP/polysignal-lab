@@ -4,9 +4,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
 
-from nautilus_trader.core import nautilus_pyo3
-from nautilus_trader.core.nautilus_pyo3 import InstrumentId
-
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.configured_markets import (
@@ -14,6 +11,7 @@ from polysignal_lab.nautilus_runtime.configured_markets import (
     instrument_load_ids,
 )
 from polysignal_lab.nautilus_runtime.observability import ObservabilityService
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_data_client_name,
 )
@@ -24,6 +22,9 @@ from polysignal_lab.nautilus_runtime.runtime_context_factory import (
 from polysignal_lab.nautilus_runtime.runtime_registration import (
     register_runtime_components,
 )
+
+nautilus_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+InstrumentId = nautilus_pyo3.InstrumentId
 
 PolymarketInstrumentProviderConfig = cast(
     Callable[..., object],

@@ -4,13 +4,13 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
-from nautilus_trader.core.nautilus_pyo3 import (
-    BookType as _Pyo3BookType,
-    DataType as _Pyo3DataType,
-    InstrumentId as _Pyo3InstrumentId,
-)
-
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.strategy_state import JsonValue, StateSchemaError
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+_Pyo3BookType = _pyo3.BookType
+_Pyo3DataType = _pyo3.DataType
+_Pyo3InstrumentId = _pyo3.InstrumentId
 
 _book_type_from_str = cast(
     Callable[[str], object],

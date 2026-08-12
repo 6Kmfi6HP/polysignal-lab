@@ -3,22 +3,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from importlib import import_module
 from typing import cast
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 
 
 def _nautilus_polymarket_instrument_id(condition_id: str, token_id: str) -> object:
     """Single path: official NT get_polymarket_instrument_id (no local id formatting)."""
     try:
+        adapter = load_nautilus_module("nautilus_trader.adapters.polymarket")
         helper = cast(
             Callable[[str, str], object],
-            getattr(
-                import_module("nautilus_trader.adapters.polymarket"),
-                "get_polymarket_instrument_id",
-            ),
+            adapter.get_polymarket_instrument_id,
         )
     except (ModuleNotFoundError, AttributeError) as exc:
         raise RuntimeError(

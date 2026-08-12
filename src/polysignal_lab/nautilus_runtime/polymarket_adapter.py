@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import assert_never
 
-from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.enums import TimeInForce
-
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
+_model_enums = load_nautilus_module("nautilus_trader.model.enums")
+OrderSide = _model_enums.OrderSide
+TimeInForce = _model_enums.TimeInForce
 
 
 class PolymarketEnumParser:

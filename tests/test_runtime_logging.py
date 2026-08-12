@@ -97,7 +97,7 @@ def test_already_initialized_logging_does_not_stop_the_runtime(
             )
 
     monkeypatch.setattr(
-        runtime_logging, "import_module", lambda _name: _AlreadyInitialized
+        runtime_logging, "load_nautilus_module", lambda _name: _AlreadyInitialized
     )
     settings = _settings(directory=str(tmp_path))
 

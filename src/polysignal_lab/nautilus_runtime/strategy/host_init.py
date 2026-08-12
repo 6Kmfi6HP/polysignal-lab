@@ -137,7 +137,11 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
 
 
 def _nautilus_config_for(req: HostInitRequest) -> tuple[object, str]:
-    from nautilus_trader.core.nautilus_pyo3 import StrategyConfig, StrategyId
+    from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
+    pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+    StrategyConfig = pyo3.StrategyConfig
+    StrategyId = pyo3.StrategyId
 
     if isinstance(req.config, PolySignalStrategyConfig):
         return (

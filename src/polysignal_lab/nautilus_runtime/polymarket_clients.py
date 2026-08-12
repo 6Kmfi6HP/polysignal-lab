@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from nautilus_trader.core.nautilus_pyo3 import ClientId
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+ClientId = _pyo3.ClientId
 
 
 def polymarket_data_client_name(timeframe: str) -> str:

@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 
-from nautilus_trader.core.nautilus_pyo3 import Strategy
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 
 from polysignal_lab.alpha.types import (
     AlphaCore,
@@ -57,6 +57,9 @@ from polysignal_lab.nautilus_runtime.strategy.host_init import (
     resolve_host_construction,
     resolve_instrument_from_cache,
 )
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+Strategy = _pyo3.Strategy
 
 __all__ = [
     "EVALUATION_HEARTBEAT_INTERVAL",

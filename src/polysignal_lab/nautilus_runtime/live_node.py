@@ -4,13 +4,19 @@ import importlib
 from collections.abc import Callable, Mapping
 from typing import cast
 
-from nautilus_trader.core.nautilus_pyo3 import AccountType, BookType, OmsType
-
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
+from polysignal_lab.nautilus_runtime.optional_imports import (
+    load_live_runtime_symbols,
+    load_nautilus_module,
+)
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_rtds_data_client_name,
 )
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+AccountType = _pyo3.AccountType
+BookType = _pyo3.BookType
+OmsType = _pyo3.OmsType
 
 SANDBOX_EXEC_CLIENT_ID = "POLYSIGNAL_PM_SANDBOX"
 LIVE_EXEC_CLIENT_ID = "POLYMARKET"

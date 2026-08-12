@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, SupportsFloat, cast
 
-from nautilus_trader.core.nautilus_pyo3 import AccountId, Venue
-
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
@@ -19,7 +17,12 @@ from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
     submit_approved_decision,
 )
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+AccountId = _pyo3.AccountId
+Venue = _pyo3.Venue
 
 logger = logging.getLogger(__name__)
 

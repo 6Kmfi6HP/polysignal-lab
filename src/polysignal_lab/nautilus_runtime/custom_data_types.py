@@ -7,9 +7,14 @@ from types import MappingProxyType
 from typing import Protocol, TypeGuard, cast
 
 import pyarrow as pa
-from nautilus_trader.core import nautilus_pyo3
-from nautilus_trader.core.data import Data
-from nautilus_trader.model.custom import customdataclass_pyo3
+
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
+nautilus_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+_core_data = load_nautilus_module("nautilus_trader.core.data")
+_model_custom = load_nautilus_module("nautilus_trader.model.custom")
+Data = _core_data.Data
+customdataclass_pyo3 = _model_custom.customdataclass_pyo3
 
 _register_custom_data_class = cast(
     Callable[[type[object]], None],

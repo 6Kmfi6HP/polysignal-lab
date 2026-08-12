@@ -4,8 +4,6 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import cast, final
 
-from nautilus_trader.adapters.polymarket.common import symbol as polymarket_symbol
-from nautilus_trader.core.nautilus_pyo3 import InstrumentId
 from pydantic import JsonValue
 
 from polysignal_lab.config import MarketConfig
@@ -13,9 +11,16 @@ from polysignal_lab.data.market_discovery_helpers import match_crypto_updown
 from polysignal_lab.data.provider.gamma_market import market_status_from_gamma
 from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.domain.market import Market
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _nautilus_instrument_id,
 )
+
+polymarket_symbol = load_nautilus_module(
+    "nautilus_trader.adapters.polymarket.common.symbol"
+)
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+InstrumentId = _pyo3.InstrumentId
 
 _get_condition_id = cast(
     Callable[[InstrumentId], str],

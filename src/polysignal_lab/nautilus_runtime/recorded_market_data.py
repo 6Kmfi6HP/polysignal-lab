@@ -9,11 +9,6 @@ from queue import Full, Queue
 from threading import Lock, Thread
 from typing import cast
 
-from nautilus_trader.adapters.polymarket import get_polymarket_instrument_id
-from nautilus_trader.adapters.polymarket.common import symbol as polymarket_symbol
-from nautilus_trader.common.config import ActorConfig
-from nautilus_trader.core import nautilus_pyo3
-
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
@@ -28,6 +23,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 from polysignal_lab.nautilus_runtime.instrument_markets import (
     PolymarketInstrumentMarketBuilder,
 )
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_data_client_id,
     polymarket_rtds_data_client_id,
@@ -35,6 +31,15 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 from polysignal_lab.nautilus_runtime.strategy import (
     subscriptions as subscription_coordinator,
 )
+
+nautilus_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+_adapters_polymarket = load_nautilus_module("nautilus_trader.adapters.polymarket")
+_common_config = load_nautilus_module("nautilus_trader.common.config")
+get_polymarket_instrument_id = _adapters_polymarket.get_polymarket_instrument_id
+polymarket_symbol = load_nautilus_module(
+    "nautilus_trader.adapters.polymarket.common.symbol"
+)
+ActorConfig = _common_config.ActorConfig
 
 logger = logging.getLogger(__name__)
 _RECORDING_FILE = "market_data.jsonl"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from importlib import import_module
 from typing import Final
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -197,11 +196,11 @@ def parse_nautilus_polymarket_instrument(
     outcome: str,
     ts_init: int | None = None,
 ) -> object:
+    from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
     try:
-        parser = getattr(
-            import_module("nautilus_trader.adapters.polymarket"),
-            "parse_polymarket_instrument",
-        )
+        adapter = load_nautilus_module("nautilus_trader.adapters.polymarket")
+        parser = adapter.parse_polymarket_instrument
     except (ModuleNotFoundError, AttributeError) as exc:
         raise RuntimeError(
             "Nautilus Polymarket adapter is required to parse Gamma markets "

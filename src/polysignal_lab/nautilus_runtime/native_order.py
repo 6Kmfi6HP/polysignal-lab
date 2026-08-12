@@ -5,10 +5,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, TypeVar, cast
 
-from nautilus_trader.core.nautilus_pyo3 import OrderSide, TimeInForce
-
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.custom_data_publisher import timestamp_ns
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
@@ -16,6 +15,10 @@ from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumPar
 from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _nautilus_instrument_id,
 )
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+OrderSide = _pyo3.OrderSide
+TimeInForce = _pyo3.TimeInForce
 
 OrderT = TypeVar("OrderT")
 OrderT_co = TypeVar("OrderT_co", covariant=True)

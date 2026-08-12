@@ -5,12 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from nautilus_trader.adapters.polymarket import get_polymarket_instrument_id
-from nautilus_trader.core import nautilus_pyo3
-
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.backtest_node import build_backtest_engine
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketMetaData
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.projections import project_position
 from polysignal_lab.nautilus_runtime.recorded_market_data import RecordedMarketDataStore
 from polysignal_lab.promotion.report import (
@@ -21,6 +19,10 @@ from polysignal_lab.promotion.report import (
     render_promotion_markdown,
 )
 from polysignal_lab.utils import utc_iso
+
+nautilus_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+_adapters_polymarket = load_nautilus_module("nautilus_trader.adapters.polymarket")
+get_polymarket_instrument_id = _adapters_polymarket.get_polymarket_instrument_id
 
 ADR_IS_FLOOR = 1000
 ADR_OOS_FLOOR = 300

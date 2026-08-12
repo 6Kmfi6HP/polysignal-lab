@@ -6,8 +6,6 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Protocol, cast
 
-from nautilus_trader.core.nautilus_pyo3 import DataActor, DataType
-
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
@@ -31,6 +29,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 from polysignal_lab.nautilus_runtime.instrument_markets import (
     PolymarketInstrumentMarketBuilder,
 )
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_data_client_id,
     polymarket_rtds_data_client_id,
@@ -41,6 +40,10 @@ from polysignal_lab.nautilus_runtime.strategy_state import (
     decode_state,
     encode_state,
 )
+
+_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
+DataActor = _pyo3.DataActor
+DataType = _pyo3.DataType
 
 logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
 
@@ -93,10 +96,12 @@ class MarketRotationActor(DataActor):
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
-        from nautilus_trader.core.nautilus_pyo3 import ActorId, DataActorConfig
         from polysignal_lab.nautilus_runtime.runtime_configs import (
             MarketRotationActorConfig,
         )
+
+        ActorId = _pyo3.ActorId
+        DataActorConfig = _pyo3.DataActorConfig
 
         if isinstance(config, MarketRotationActorConfig) and settings is None:
             settings = config.settings()
@@ -165,7 +170,7 @@ class MarketRotationActor(DataActor):
         now = self._framework_now()
         exited_condition_ids = self._retire_expired_markets(now)
         if self.settings.runtime.nautilus.market_rotation.enabled:
-            from nautilus_trader.core.nautilus_pyo3 import Venue
+            Venue = _pyo3.Venue
 
             venue = Venue.from_str("POLYMARKET")
             for timeframe in self.settings.markets.timeframes:
@@ -268,7 +273,7 @@ class MarketRotationActor(DataActor):
             _ = self.clock.cancel_timer(_MARKET_EXPIRY_TIMER_NAME)  # pyright: ignore[reportAny]
             self._expiry_timer_started = False
         if self._instrument_subscriptions_started:
-            from nautilus_trader.core.nautilus_pyo3 import Venue
+            Venue = _pyo3.Venue
 
             venue = Venue.from_str("POLYMARKET")
             for timeframe in self.settings.markets.timeframes:

@@ -69,9 +69,12 @@ def gamma_events_query_params(
 
 def gamma_markets_slug_query_params(slug: str) -> dict[str, str]:
     """Build /markets?slug=... params via official Nautilus gamma helper."""
-    from nautilus_trader.adapters.polymarket.common.gamma_markets import (
-        build_markets_query,
+    from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
+    gamma_markets = load_nautilus_module(
+        "nautilus_trader.adapters.polymarket.common.gamma_markets"
     )
+    build_markets_query = gamma_markets.build_markets_query
 
     raw = build_markets_query({"slug": slug})
     return {str(key): str(value) for key, value in raw.items()}

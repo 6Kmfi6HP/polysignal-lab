@@ -3,12 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import cast
 
-from nautilus_trader.core import nautilus_pyo3
-
 from polysignal_lab.config import SecurityConfigError, Settings
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.recorded_market_data import (
     RecordedMarketDataActor,
     RecordedMarketDataActorConfig,
@@ -18,6 +17,8 @@ from polysignal_lab.nautilus_runtime.runtime_configs import (
     PolySignalStrategyConfig,
     importable_config_dict,
 )
+
+nautilus_pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
 
 _importable_actor_config = cast(
     Callable[..., object],

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from importlib import import_module
 from pathlib import Path
 
 from polysignal_lab.config import Settings
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.observability.logger import configure_logging
 
 logger = logging.getLogger("polysignal_lab.nautilus_runtime.runtime_logging")
@@ -42,7 +42,7 @@ def _init_nautilus_logging(settings: Settings) -> object | None:
     sinks and this returns None — observability setup must never stop the
     runtime from trading.
     """
-    pyo3 = import_module("nautilus_trader.core.nautilus_pyo3")
+    pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
     kwargs = _nautilus_logging_kwargs(settings)
     directory = kwargs["directory"]
     if isinstance(directory, str):

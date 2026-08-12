@@ -4,12 +4,13 @@ from collections.abc import Sequence
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 
 
 def _recorded_clock_data(
     custom_data: tuple[object, ...], instrument_id: object
 ) -> list[object]:
-    from nautilus_trader.core import nautilus_pyo3 as pyo3
+    pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
 
     timestamps = sorted({int(getattr(item, "ts_init")) for item in custom_data})
     clock_data: list[object] = []
@@ -35,7 +36,7 @@ def _add_backtest_data(
     source: list[object],
     instruments: Sequence[object],
 ) -> None:
-    from nautilus_trader.core import nautilus_pyo3 as pyo3
+    pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
 
     native_data: list[object] = [
         item
@@ -77,7 +78,7 @@ def build_backtest_engine(
 ) -> object:
     if settings is None:
         settings = load_settings()
-    from nautilus_trader.core import nautilus_pyo3 as pyo3
+    pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
 
     runtime = settings.runtime.nautilus
     engine = pyo3.BacktestEngine(

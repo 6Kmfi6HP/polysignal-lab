@@ -3,12 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 
-from nautilus_trader.common.config import ActorConfig
-from nautilus_trader.trading.config import StrategyConfig
 from pydantic import TypeAdapter
 
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.market import Market
+from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
+
+_common_config = load_nautilus_module("nautilus_trader.common.config")
+_trading_config = load_nautilus_module("nautilus_trader.trading.config")
+ActorConfig = _common_config.ActorConfig
+StrategyConfig = _trading_config.StrategyConfig
 
 
 _MARKETS_ADAPTER = TypeAdapter(tuple[Market, ...])
