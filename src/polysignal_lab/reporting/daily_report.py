@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import date
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 from polysignal_lab.domain.enums import TradeResultStatus
+from polysignal_lab.domain.missing_values import (
+    COLLAPSE_COMPONENT,
+    missing_value_counter,
+)
 from polysignal_lab.domain.reporting_result import (
     DailyReport,
     EquitySource,
-    trade_result_float,
+    trade_result_display,
+    trade_result_number,
     trade_result_status,
-    trade_result_text,
 )
 from polysignal_lab.reporting.aggregates import (
     average as _average,
@@ -23,6 +28,52 @@ from polysignal_lab.reporting.rejections import (
     is_rejected_order_payload,
     normalize_reject_reason,
 )
+
+
+class _CollapseRecorder:
+    """Records a missing-value collapse at most once per (record, field).
+
+    A single closed record is read by several aggregations (totals, per-attribute
+    breakdowns, calibration); the collapse counter must reflect distinct missing
+    values, not repeat reads, so it stays a trustworthy signal.
+    """
+
+    def __init__(self) -> None:
+        self._seen: set[tuple[int, str]] = set()
+
+    def count(self, row_id: int, field: str) -> None:
+        if (row_id, field) in self._seen:
+            return
+        self._seen.add((row_id, field))
+        counter = missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(COLLAPSE_COMPONENT, f"collapsed_{field}")
+
+
+@dataclass(slots=True)
+class _ClosedRow:
+    """A closed trade result with numeric fields resolved once up front."""
+
+    record: Mapping[str, Any]
+    pnl_usdc: float | None
+    roi: float | None
+
+
+def _resolve_closed_rows(
+    closed: list[Mapping[str, Any]], recorder: _CollapseRecorder
+) -> list[_ClosedRow]:
+    """Read numeric fields once per record, recording collapses exactly once."""
+    rows: list[_ClosedRow] = []
+    for record in closed:
+        pnl_usdc = trade_result_number(record, "pnl_usdc")
+        roi = trade_result_number(record, "roi")
+        row_id = id(record)
+        if pnl_usdc is None:
+            recorder.count(row_id, "pnl_usdc")
+        if roi is None:
+            recorder.count(row_id, "roi")
+        rows.append(_ClosedRow(record=record, pnl_usdc=pnl_usdc, roi=roi))
+    return rows
 
 
 class DailyReportService:
@@ -51,6 +102,8 @@ class DailyReportService:
         result_list = list(results)
         incomplete_reasons = sorted(set(telemetry_incomplete_reasons))
         closed = [r for r in result_list if _is_closed_result(r)]
+        recorder = _CollapseRecorder()
+        closed_rows = _resolve_closed_rows(closed, recorder)
         wins = sum(1 for r in closed if trade_result_status(r) == TradeResultStatus.WIN)
         losses = sum(
             1 for r in closed if trade_result_status(r) == TradeResultStatus.LOSS
@@ -60,24 +113,12 @@ class DailyReportService:
         )
         denominator = len(closed)
         win_rate = wins / denominator if denominator else 0.0
-        total_pnl = sum(trade_result_float(r, "pnl_usdc") for r in closed)
-        avg_roi = (
-            sum(trade_result_float(r, "roi") for r in closed) / len(closed)
-            if closed
-            else 0.0
-        )
-        profit = sum(
-            trade_result_float(r, "pnl_usdc")
-            for r in closed
-            if trade_result_float(r, "pnl_usdc") > 0
-        )
-        loss = abs(
-            sum(
-                trade_result_float(r, "pnl_usdc")
-                for r in closed
-                if trade_result_float(r, "pnl_usdc") < 0
-            )
-        )
+        pnl_values = [row.pnl_usdc for row in closed_rows if row.pnl_usdc is not None]
+        roi_values = [row.roi for row in closed_rows if row.roi is not None]
+        total_pnl = sum(pnl_values)
+        avg_roi = sum(roi_values) / len(roi_values) if roi_values else 0.0
+        profit = sum(value for value in pnl_values if value > 0)
+        loss = abs(sum(value for value in pnl_values if value < 0))
         profit_factor = profit / loss if loss else None
         curve = equity_curve or [starting_equity, ending_equity]
         max_drawdown = self._max_drawdown(curve)
@@ -128,10 +169,10 @@ class DailyReportService:
             average_roi=avg_roi,
             max_drawdown=max_drawdown,
             profit_factor=profit_factor,
-            strategy_breakdown=self._breakdown(closed, "strategy"),
-            asset_breakdown=self._breakdown(closed, "asset"),
-            timeframe_breakdown=self._breakdown(closed, "timeframe"),
-            calibration_breakdown=_calibration_breakdown(closed),
+            strategy_breakdown=self._breakdown(closed_rows, "strategy"),
+            asset_breakdown=self._breakdown(closed_rows, "asset"),
+            timeframe_breakdown=self._breakdown(closed_rows, "timeframe"),
+            calibration_breakdown=_calibration_breakdown(closed_rows),
         )
 
     def _execution_aggregates(
@@ -204,7 +245,7 @@ class DailyReportService:
         }
 
     def _breakdown(
-        self, results: list[Mapping[str, Any]], attr: str
+        self, closed_rows: list[_ClosedRow], attr: str
     ) -> dict[str, dict[str, float | int]]:
         rows: dict[str, dict[str, float | int]] = defaultdict(
             lambda: {
@@ -217,21 +258,28 @@ class DailyReportService:
             }
         )
         roi_sum: dict[str, float] = defaultdict(float)
-        for r in results:
-            key = trade_result_text(r, attr)
-            row = rows[key]
-            row["closed_positions"] += 1
-            status = trade_result_status(r)
-            row["win_count"] += 1 if status == TradeResultStatus.WIN else 0
-            row["loss_count"] += 1 if status == TradeResultStatus.LOSS else 0
-            row["void_count"] += 1 if status == TradeResultStatus.VOID else 0
-            row["total_pnl_usdc"] += trade_result_float(r, "pnl_usdc")
-            roi_sum[key] += trade_result_float(r, "roi")
-        for key, row in rows.items():
-            count = row["closed_positions"] or 1
-            row["average_roi"] = roi_sum[key] / count
-            wins = row["win_count"]
-            row["win_rate"] = wins / count if count else 0.0
+        roi_count: dict[str, int] = defaultdict(int)
+        for row in closed_rows:
+            record = row.record
+            key = trade_result_display(record, attr)
+            bucket = rows[key]
+            bucket["closed_positions"] += 1
+            status = trade_result_status(record)
+            bucket["win_count"] += 1 if status == TradeResultStatus.WIN else 0
+            bucket["loss_count"] += 1 if status == TradeResultStatus.LOSS else 0
+            bucket["void_count"] += 1 if status == TradeResultStatus.VOID else 0
+            if row.pnl_usdc is not None:
+                bucket["total_pnl_usdc"] += row.pnl_usdc
+            if row.roi is not None:
+                roi_sum[key] += row.roi
+                roi_count[key] += 1
+        for key, bucket in rows.items():
+            count = bucket["closed_positions"] or 1
+            bucket["average_roi"] = (
+                roi_sum[key] / roi_count[key] if roi_count[key] else 0.0
+            )
+            wins = bucket["win_count"]
+            bucket["win_rate"] = wins / count if count else 0.0
         return dict(rows)
 
     def _max_drawdown(self, curve: list[float]) -> float:

@@ -11,11 +11,45 @@ from polysignal_lab.domain.reporting_result import (
     report_float,
     report_nested_mapping,
     report_text,
-    trade_result_float,
+    trade_result_display,
+    trade_result_number,
     trade_result_status,
-    trade_result_text,
+)
+from polysignal_lab.domain.missing_values import (
+    COLLAPSE_COMPONENT,
+    missing_value_counter,
 )
 from polysignal_lab.domain.signal import SignalCandidate
+
+_NA = "n/a"
+
+
+def _read_number(result: Mapping[str, object], key: str) -> float | None:
+    """Read a numeric trade-result field, counting a missing value as a collapse.
+
+    The publish path is a bypass: a missing value must not collapse to zero nor
+    interrupt the message, so the caller degrades to ``n/a`` and this helper
+    records the collapse.
+    """
+    value = trade_result_number(result, key)
+    if value is None:
+        counter = missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(COLLAPSE_COMPONENT, f"collapsed_{key}")
+    return value
+
+
+def _format_number(result: Mapping[str, object], key: str, spec: str) -> str:
+    """Format a numeric trade-result field, degrading missing values to n/a."""
+    value = _read_number(result, key)
+    return _NA if value is None else format(value, spec)
+
+
+def _count_collapse(key: str) -> None:
+    """Record a single missing-value collapse for ``key`` when a counter is bound."""
+    counter = missing_value_counter()
+    if counter is not None:
+        counter.inc_metric(COLLAPSE_COMPONENT, f"collapsed_{key}")
 
 
 class MessageFormatter:
@@ -41,8 +75,10 @@ ID: <code>{html.escape(signal.signal_id)}</code>"""
         return self._truncate(message)
 
     def result_message(self, result: Mapping[str, object]) -> str:
-        pnl_usdc = trade_result_float(result, "pnl_usdc")
-        sign = "+" if pnl_usdc >= 0 else ""
+        pnl = _read_number(result, "pnl_usdc")
+        roi = _read_number(result, "roi")
+        pnl_text = _NA if pnl is None else f"{'+' if pnl >= 0 else ''}{pnl:.4f}"
+        roi_text = _NA if roi is None else f"{'+' if roi >= 0 else ''}{roi:.2%}"
         status = trade_result_status(result)
         match status:
             case TradeResultStatus.WIN:
@@ -51,22 +87,28 @@ ID: <code>{html.escape(signal.signal_id)}</code>"""
                 emoji = "🔴"
             case _:
                 emoji = "⚪"
-        asset = trade_result_text(result, "asset")
-        timeframe = trade_result_text(result, "timeframe")
-        strategy = trade_result_text(result, "strategy")
-        side = trade_result_text(result, "side")
-        signal_id = trade_result_text(result, "signal_id")
+        asset = trade_result_display(result, "asset")
+        timeframe = trade_result_display(result, "timeframe")
+        strategy = trade_result_display(result, "strategy")
+        side = trade_result_display(result, "side")
+        signal_id = trade_result_display(result, "signal_id")
+        if not signal_id:
+            _count_collapse("signal_id")
+        entry_text = _format_number(result, "entry_price", ".4f")
+        stake_text = _format_number(result, "stake_usdc", ".2f")
+        shares_text = _format_number(result, "shares", ".4f")
+        settle_text = _format_number(result, "settlement_value", ".4f")
         message = f"""<b>{emoji} {html.escape(asset)} {html.escape(timeframe)} · {html.escape(status.value)}</b>
 <code>{html.escape(strategy)}</code>
 
 Side   {html.escape(side)}
-Entry  {trade_result_float(result, "entry_price"):.4f}
-Stake  {trade_result_float(result, "stake_usdc"):.2f} USDC
-Shares {trade_result_float(result, "shares"):.4f}
+Entry  {entry_text}
+Stake  {stake_text} USDC
+Shares {shares_text}
 
-PnL    {sign}{pnl_usdc:.4f} USDC
-ROI    {sign}{trade_result_float(result, "roi"):.2%}
-Settle {trade_result_float(result, "settlement_value"):.4f} USDC
+PnL    {pnl_text} USDC
+ROI    {roi_text}
+Settle {settle_text} USDC
 
 Mode: Sandbox
 ID: <code>{html.escape(signal_id)}</code>"""

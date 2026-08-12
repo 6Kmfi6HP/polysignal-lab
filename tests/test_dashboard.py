@@ -379,9 +379,7 @@ def test_dashboard_report_orders_and_positions_paginate_by_offset_and_status(
     assert positions.json()["total"] == 3
 
     assert rejected.status_code == 200
-    assert [row["report_order_id"] for row in rejected.json()["items"]] == [
-        "order-2"
-    ]
+    assert [row["report_order_id"] for row in rejected.json()["items"]] == ["order-2"]
     assert rejected.json()["total"] == 1
 
 
@@ -1190,6 +1188,105 @@ async def test_leaderboard_recomputes_calibration_status_after_aggregation(
     assert row["average_entry_price"] == pytest.approx(0.60)
     assert row["average_return"] == pytest.approx(0.03)
     assert row["calibration_status"] == "calibrated"
+
+
+async def test_leaderboard_calibration_merge_ignores_missing_entry_price_by_count(
+    tmp_path,
+) -> None:
+    # Given: two reports whose per-bucket entry_price_count differs from
+    # sample_size (some closed results had a missing entry_price). The merged
+    # average must weight by present-value count, not sample_size.
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    first_report = DailyReport(
+        report_id="dr-miss-1",
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1002.0,
+        net_pnl=2.0,
+        return_rate=0.002,
+        total_signals=3,
+        order_count=3,
+        fill_count=3,
+        rejected_order_count=0,
+        open_positions=0,
+        closed_positions=3,
+        win_count=2,
+        loss_count=1,
+        void_count=0,
+        win_rate=2 / 3,
+        total_pnl_usdc=2.0,
+        average_roi=0.02,
+        max_drawdown=0.0,
+        profit_factor=2.0,
+        calibration_breakdown={
+            "ptb_diff|BTC|5m|high": {
+                "strategy": "ptb_diff",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 3,
+                "wins": 2,
+                "losses": 1,
+                "entry_price_count": 1,
+                "return_count": 1,
+                "average_entry_price": 0.90,
+                "average_return": 0.02,
+                "calibration_status": "insufficient_data",
+            }
+        },
+    )
+    second_report = DailyReport(
+        report_id="dr-miss-2",
+        report_date=date(2026, 6, 23),
+        starting_equity=1002.0,
+        ending_equity=1006.0,
+        net_pnl=4.0,
+        return_rate=0.004,
+        total_signals=1,
+        order_count=1,
+        fill_count=1,
+        rejected_order_count=0,
+        open_positions=0,
+        closed_positions=1,
+        win_count=1,
+        loss_count=0,
+        void_count=0,
+        win_rate=1.0,
+        total_pnl_usdc=4.0,
+        average_roi=0.04,
+        max_drawdown=0.0,
+        profit_factor=1.0,
+        calibration_breakdown={
+            "ptb_diff|BTC|5m|high": {
+                "strategy": "ptb_diff",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 1,
+                "wins": 1,
+                "losses": 0,
+                "entry_price_count": 1,
+                "return_count": 1,
+                "average_entry_price": 0.10,
+                "average_return": 0.04,
+                "calibration_status": "insufficient_data",
+            }
+        },
+    )
+    store.insert_daily_report(first_report)
+    store.insert_daily_report(second_report)
+    client = TestClient(create_dashboard_app(store))
+
+    # When: calibration rows are read through the leaderboard API.
+    response = client.get("/api/leaderboard")
+
+    # Then: averages weight by present-value count (1 each), not sample_size.
+    assert response.status_code == 200
+    row = response.json()["calibration_breakdown"]["ptb_diff|BTC|5m|high"]
+    assert row["sample_size"] == 4
+    assert row["average_entry_price"] == pytest.approx(0.50)  # (0.90*1 + 0.10*1)/2
+    assert row["average_return"] == pytest.approx(0.03)  # (0.02*1 + 0.04*1)/2
+    assert row["calibration_status"] == "insufficient_data"
 
 
 def test_dashboard_exposes_bounded_strategy_status_rows(tmp_path) -> None:

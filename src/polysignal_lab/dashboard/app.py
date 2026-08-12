@@ -171,8 +171,14 @@ def _calibration_from_reports(
 ) -> dict[str, JsonValue]:
     merged: dict[str, JsonValue] = {}
     average_weighted_sum: dict[str, dict[str, float]] = {}
-    average_sample_size: dict[str, dict[str, int]] = {}
+    average_weighted_count: dict[str, dict[str, int]] = {}
     count_keys = ("sample_size", "wins", "losses")
+    # Per-bucket counts of present values, mirroring the per-report denominator
+    # so cross-report averages weight by present-value count, not sample_size.
+    average_count_keys = {
+        "average_entry_price": "entry_price_count",
+        "average_return": "return_count",
+    }
     for report in reports:
         rows = report.get("calibration_breakdown", {})
         if not isinstance(rows, dict):
@@ -187,20 +193,25 @@ def _calibration_from_reports(
                 entry = {
                     key: value
                     for key, value in row.items()
-                    if key not in count_keys and not key.startswith("average_")
+                    if key not in count_keys
+                    and not key.startswith("average_")
+                    and key not in average_count_keys.values()
                 }
                 merged[bucket] = entry
             sample_size = _as_int(row.get("sample_size"))
             for key in count_keys:
                 entry[key] = _as_int(entry.get(key)) + _as_int(row.get(key))
-            for key, value in row.items():
-                if key.startswith("average_"):
-                    weighted_sum = average_weighted_sum.setdefault(bucket, {})
-                    weighted_count = average_sample_size.setdefault(bucket, {})
-                    weighted_sum[key] = weighted_sum.get(key, 0.0) + (
-                        _as_float(value) * sample_size
-                    )
-                    weighted_count[key] = weighted_count.get(key, 0) + sample_size
+            for avg_key, count_key in average_count_keys.items():
+                value = row.get(avg_key)
+                if value is None:
+                    continue
+                count = _as_int(row.get(count_key)) or sample_size
+                weighted_sum = average_weighted_sum.setdefault(bucket, {})
+                weighted_count = average_weighted_count.setdefault(bucket, {})
+                weighted_sum[avg_key] = weighted_sum.get(avg_key, 0.0) + (
+                    _as_float(value) * count
+                )
+                weighted_count[avg_key] = weighted_count.get(avg_key, 0) + count
     for bucket, entry in merged.items():
         if isinstance(entry, dict):
             sample_size = _as_int(entry.get("sample_size"))
@@ -210,7 +221,7 @@ def _calibration_from_reports(
                 else "insufficient_data"
             )
             for key, weighted_sum in average_weighted_sum.get(bucket, {}).items():
-                divisor = average_sample_size.get(bucket, {}).get(key, 0)
+                divisor = average_weighted_count.get(bucket, {}).get(key, 0)
                 entry[key] = weighted_sum / divisor if divisor else 0.0
     return merged
 
@@ -369,9 +380,7 @@ def create_dashboard_app(
             for row in rows
         ]
         return {
-            "items": [
-                payload for payload in payloads if _valid_order_payload(payload)
-            ],
+            "items": [payload for payload in payloads if _valid_order_payload(payload)],
             "total": reporting.report_order_count(status),
         }
 

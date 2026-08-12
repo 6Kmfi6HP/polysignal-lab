@@ -14,7 +14,7 @@ from polysignal_lab.app.daily_report.sources import (
     _order_metrics,
 )
 from polysignal_lab.app.daily_report.types import DailyReportInputs, _ReportScheduler
-from polysignal_lab.domain.reporting_result import DailyReport, trade_result_float
+from polysignal_lab.domain.reporting_result import DailyReport, trade_result_number
 from polysignal_lab.reporting.aggregates import is_closed_result
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.reporting.rejections import is_rejected_order_payload
@@ -116,7 +116,14 @@ def _day_closed_pnl(results: list[dict[str, Any]]) -> float | None:
     closed = [result for result in results if is_closed_result(result)]
     if not closed:
         return None
-    return sum(trade_result_float(result, "pnl_usdc") for result in closed)
+    # Skip missing PnL rather than collapsing it to zero; only present values
+    # contribute to the equity derivation.
+    pnl_values = [
+        value
+        for value in (trade_result_number(result, "pnl_usdc") for result in closed)
+        if value is not None
+    ]
+    return sum(pnl_values) if pnl_values else None
 
 
 def _claim_and_log_report(
