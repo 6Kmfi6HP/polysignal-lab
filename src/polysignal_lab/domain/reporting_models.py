@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date, datetime
-import math
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field
@@ -78,34 +77,6 @@ def _row_value(row: Mapping[str, Any] | Any, key: str, default: Any = None) -> A
     if isinstance(row, Mapping):
         return row.get(key, default)
     return getattr(row, key, default)
-
-
-def account_float(
-    row: Mapping[str, Any] | Any, key: str, default: float = 0.0
-) -> float:
-    value = _row_value(row, key, default)
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float, str)):
-        try:
-            parsed = float(value)
-        except (OverflowError, TypeError, ValueError):
-            return default
-        return parsed if math.isfinite(parsed) else default
-    return default
-
-
-def report_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -> float:
-    return account_float(row, key, default)
-
-
-def report_text(row: Mapping[str, Any] | Any, key: str, default: str = "") -> str:
-    value = _row_value(row, key, default)
-    if value is None:
-        return default
-    if isinstance(value, date):
-        return value.isoformat()
-    return str(value)
 
 
 def report_date_text(row: Mapping[str, Any] | Any) -> str:

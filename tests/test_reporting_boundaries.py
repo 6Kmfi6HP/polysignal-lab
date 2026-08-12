@@ -6,8 +6,7 @@ from datetime import datetime
 from factories import sample_report_result
 
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.domain.reporting_models import report_float, account_float
-from polysignal_lab.domain.reporting_result import trade_result_float
+from polysignal_lab.domain.reporting_result import trade_result_number
 from polysignal_lab.app.daily_report.sources import _order_terminal_at
 from polysignal_lab.reporting.aggregates import confidence_bucket, optional_float
 from polysignal_lab.reporting.daily_report import DailyReportService
@@ -164,11 +163,11 @@ def test_strategy_leaderboard_ignores_boolean_trade_result_numbers() -> None:
     assert rows[0]["average_roi"] == 0.0
 
 
-def test_report_numeric_accessors_ignore_booleans() -> None:
+def test_trade_result_number_ignores_booleans() -> None:
     row = {"cash_balance": True, "total_pnl_usdc": True}
 
-    assert account_float(row, "cash_balance") == 0.0
-    assert report_float(row, "total_pnl_usdc") == 0.0
+    assert trade_result_number(row, "cash_balance") is None
+    assert trade_result_number(row, "total_pnl_usdc") is None
 
 
 def test_confidence_bucket_ignores_boolean_confidence() -> None:
@@ -179,14 +178,14 @@ def test_confidence_bucket_ignores_non_numeric_confidence() -> None:
     assert confidence_bucket("bad") == "low"
 
 
-def test_report_numeric_accessors_ignore_non_finite_values() -> None:
+def test_trade_result_number_ignores_non_finite_values() -> None:
     row = {"cash_balance": "NaN", "total_pnl_usdc": "Infinity"}
 
-    assert account_float(row, "cash_balance") == 0.0
-    assert report_float(row, "total_pnl_usdc") == 0.0
+    assert trade_result_number(row, "cash_balance") is None
+    assert trade_result_number(row, "total_pnl_usdc") is None
 
 
-def test_report_numeric_helpers_ignore_huge_json_integers() -> None:
+def test_trade_result_number_ignores_huge_json_integers() -> None:
     huge = 10**4000
     row = {
         "cash_balance": huge,
@@ -194,9 +193,9 @@ def test_report_numeric_helpers_ignore_huge_json_integers() -> None:
         "pnl_usdc": huge,
     }
 
-    assert account_float(row, "cash_balance") == 0.0
-    assert report_float(row, "total_pnl_usdc") == 0.0
-    assert trade_result_float(row, "pnl_usdc") == 0.0
+    assert trade_result_number(row, "cash_balance") is None
+    assert trade_result_number(row, "total_pnl_usdc") is None
+    assert trade_result_number(row, "pnl_usdc") is None
     assert optional_float(huge) is None
     assert confidence_bucket(huge) == "low"
 

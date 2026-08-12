@@ -14,10 +14,7 @@ from polysignal_lab.domain.reporting_models import (
     ReportAccountSnapshotRow,
     daily_report_row,
     report_date_text,
-    report_float,
     report_nested_mapping,
-    report_text,
-    account_float,
 )
 from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
@@ -35,17 +32,12 @@ __all__ = [
     "daily_report_row",
     "parse_report_result_row",
     "report_date_text",
-    "report_float",
     "report_nested_mapping",
-    "report_text",
     "trade_result_details",
     "trade_result_display",
-    "trade_result_float",
     "trade_result_identifier",
     "trade_result_number",
     "trade_result_status",
-    "trade_result_text",
-    "account_float",
 ]
 
 _REPORT_RESULT_SOURCE = "report_results"
@@ -93,28 +85,6 @@ def trade_result_status(row: Mapping[str, Any]) -> TradeResultStatus:
         return TradeResultStatus(str(raw))
     except ValueError:
         return TradeResultStatus.UNKNOWN
-
-
-def trade_result_text(row: Mapping[str, Any], key: str, default: str = "") -> str:
-    value = row.get(key)
-    if value is None:
-        return default
-    if isinstance(value, Side):
-        return value.value
-    return str(value)
-
-
-def trade_result_float(row: Mapping[str, Any], key: str, default: float = 0.0) -> float:
-    value = row.get(key)
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float, str)):
-        try:
-            parsed = float(value)
-        except (OverflowError, TypeError, ValueError):
-            return default
-        return parsed if math.isfinite(parsed) else default
-    return default
 
 
 def trade_result_number(
@@ -179,7 +149,7 @@ def parse_report_result_row(row: Mapping[str, Any]) -> ReportResultRow:
         "opened_at",
         "closed_at",
     ):
-        if not trade_result_text(payload, key):
+        if not trade_result_display(payload, key):
             raise InvalidReportResultRow(key, "missing")
 
     status = trade_result_status(payload)

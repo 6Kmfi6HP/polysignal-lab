@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import math
+from datetime import date
 from typing import Literal
 
 from collections.abc import Mapping
@@ -8,9 +10,7 @@ from collections.abc import Mapping
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.reporting_result import (
     report_date_text,
-    report_float,
     report_nested_mapping,
-    report_text,
     trade_result_display,
     trade_result_number,
     trade_result_status,
@@ -131,8 +131,8 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
         return self._truncate(message)
 
     def daily_report_message(self, report: object) -> str:
-        equity_currency = report_text(report, "equity_currency", "USDC")
-        equity_source = report_text(report, "equity_source")
+        equity_currency = _report_text(report, "equity_currency", "USDC")
+        equity_source = _report_text(report, "equity_source")
         source_labels = {
             "portfolio": "Portfolio",
             "account_balance": "Account balance",
@@ -144,7 +144,7 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
             if equity_source in source_labels
             else ""
         )
-        revision = int(report_float(report, "revision", 1.0))
+        revision = int(_report_float(report, "revision", 1.0))
         title = (
             "📊 Daily Trading Report"
             if revision <= 1
@@ -160,7 +160,7 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
             if isinstance(reasons_raw, (list, tuple))
             else []
         )
-        telemetry_text = report_text(
+        telemetry_text = _report_text(
             report,
             "telemetry_status",
             "complete",
@@ -195,28 +195,28 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
             )
         exec_lag_value = _row_optional_float(report, "average_execution_staleness_ms")
         exec_lag = "n/a" if exec_lag_value is None else f"{exec_lag_value:.0f} ms"
-        win_count = int(report_float(report, "win_count"))
-        loss_count = int(report_float(report, "loss_count"))
-        void_count = int(report_float(report, "void_count"))
+        win_count = int(_report_float(report, "win_count"))
+        loss_count = int(_report_float(report, "loss_count"))
+        void_count = int(_report_float(report, "void_count"))
         wl_line = f"{win_count} / {loss_count}"
         if void_count > 0:
             wl_line += f" / {void_count}V"
         message = f"""<b>{title}</b>
 {report_date_text(report)}
 
-Equity  {report_float(report, "starting_equity"):.2f} → {report_float(report, "ending_equity"):.2f} {html.escape(equity_currency)}{source_line}
-PnL     {report_float(report, "net_pnl"):+.2f} {html.escape(equity_currency)}
-ROI     {report_float(report, "return_rate"):+.2%}
+Equity  {_report_float(report, "starting_equity"):.2f} → {_report_float(report, "ending_equity"):.2f} {html.escape(equity_currency)}{source_line}
+PnL     {_report_float(report, "net_pnl"):+.2f} {html.escape(equity_currency)}
+ROI     {_report_float(report, "return_rate"):+.2%}
 
-Signals {int(report_float(report, "total_signals"))}
-Orders  {int(report_float(report, "order_count"))}
-Rejects {int(report_float(report, "rejected_order_count"))} ({reject_text})
+Signals {int(_report_float(report, "total_signals"))}
+Orders  {int(_report_float(report, "order_count"))}
+Rejects {int(_report_float(report, "rejected_order_count"))} ({reject_text})
 ExecLag {exec_lag}
 Telemetry {html.escape(telemetry_text)}
-Filled  {int(report_float(report, "fill_count"))}
-Closed  {int(report_float(report, "closed_positions"))}
+Filled  {int(_report_float(report, "fill_count"))}
+Closed  {int(_report_float(report, "closed_positions"))}
 W/L     {wl_line}
-WR      {report_float(report, "win_rate"):.2%}
+WR      {_report_float(report, "win_rate"):.2%}
 
 <b>Strategies</b>
 {strategy_text}"""
@@ -275,6 +275,34 @@ def _row_optional_float(row: Mapping[str, object] | object, key: str) -> float |
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:
-        return float(value)
-    except ValueError:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _report_float(
+    row: Mapping[str, object] | object, key: str, default: float = 0.0
+) -> float:
+    """Read a numeric report field at the publish convergence point.
+
+    The publish path is an external interface: a missing value degrades to
+    the provided default rather than propagating ``None`` upward.
+    """
+    value = _row_optional_float(row, key)
+    return default if value is None else value
+
+
+def _report_text(
+    row: Mapping[str, object] | object, key: str, default: str = ""
+) -> str:
+    """Read a text report field at the publish convergence point."""
+    if isinstance(row, Mapping):
+        value = row.get(key, default)
+    else:
+        value = getattr(row, key, default)
+    if value is None:
+        return default
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
