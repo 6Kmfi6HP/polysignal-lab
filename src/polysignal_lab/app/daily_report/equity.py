@@ -35,10 +35,7 @@ def _is_nautilus_reporting_cache(value: Any) -> TypeGuard[_NautilusReportingCach
 
 
 def _sandbox_base_currency(settings: Any) -> str:
-    runtime = getattr(settings, "runtime", None)
-    nautilus = getattr(runtime, "nautilus", None)
-    currency = getattr(nautilus, "sandbox_base_currency", "USDC")
-    return str(currency) if currency else "USDC"
+    return settings.runtime.nautilus.sandbox_base_currency
 
 
 def _report_equity_inputs(
