@@ -403,16 +403,22 @@ class TelegramBotService:
                 token_id = ""
             book = self._book_for_token(token_id) if token_id else None
             mark = getattr(book, "best_bid", None) if book is not None else None
-            entry_price = float(payload.get("entry_price") or 0.0)
-            shares = float(payload.get("shares") or 0.0)
-            stake_usdc = float(payload.get("stake_usdc") or 0.0)
+            entry_price = missing_values.number(payload, {}, "entry_price")
+            shares = missing_values.number(payload, {}, "shares")
+            stake_usdc = missing_values.number(payload, {}, "stake_usdc")
+            entry_text = f"{entry_price:.4f}" if entry_price is not None else "n/a"
+            shares_text = f"{shares:.4f}" if shares is not None else "n/a"
             lines = [
                 f"📈 {self._safe(payload.get('asset'))} {self._safe(payload.get('timeframe'))} · {self._safe(payload.get('side'))}",
                 f"Strategy  {self._safe(payload.get('strategy'))}",
-                f"Entry     {entry_price:.4f}",
+                f"Entry     {entry_text}",
             ]
             if mark is None:
                 lines.extend(["Mark      n/a (live book unavailable)", "PnL       n/a"])
+            elif entry_price is None or shares is None or stake_usdc is None:
+                lines.extend(
+                    [f"Mark      {mark:.4f}", f"Shares    {shares_text}", "PnL       n/a"]
+                )
             else:
                 pnl = (mark - entry_price) * shares
                 roi = pnl / stake_usdc if stake_usdc else 0.0
@@ -420,7 +426,7 @@ class TelegramBotService:
                 lines.extend(
                     [
                         f"Mark      {mark:.4f}",
-                        f"Shares    {shares:.4f}",
+                        f"Shares    {shares_text}",
                         f"PnL       {sign}{pnl:.2f} USDC ({sign}{roi:.2%})",
                     ]
                 )
@@ -665,7 +671,8 @@ class TelegramBotService:
         strategies = list(self.strategy_names)
         enabled_count = sum(1 for name in strategies if self._is_strategy_enabled(name))
         total_count = len(strategies)
-        equity = float(account.get("equity", 0.0) or 0.0)
+        equity = missing_values.number(account, {}, "equity")
+        equity_text = f"{equity:.2f}" if equity is not None else "n/a"
         health_age = self._format_age(health.get("created_at")) if health else "n/a"
         return "\n".join(
             [
@@ -673,7 +680,7 @@ class TelegramBotService:
                 f"Health age  {health_age}",
                 f"Markets     {len(self.markets.markets)} tracked",
                 f"Positions   {len(positions)} open",
-                f"Account     {equity:.2f} USDC equity",
+                f"Account     {equity_text} USDC equity",
                 f"Signals     {counts.get('signals', 0)} accepted / {counts.get('rejected_signals', 0)} rejected",
                 f"Strategies  {enabled_count}/{total_count} enabled",
                 f"Telegram    {'polling ok' if self._running else 'not polling'}",
@@ -699,7 +706,3 @@ def _position_display_payload(
     market: object | None = None,
 ) -> dict[str, Any]:
     return telegram_render.position_display_payload(row, market=market)
-
-
-def _row_float(row: dict[str, Any], *keys: str) -> float | None:
-    return telegram_render.row_float(row, *keys)

@@ -156,6 +156,10 @@ def _migrate_results(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> Non
             )
         except missing_values.MissingIdentifierError:
             continue
+        pnl_usdc = missing_values.number(row, {}, "pnl_usdc")
+        roi = missing_values.number(row, {}, "roi")
+        if pnl_usdc is None or roi is None:
+            continue
         payload_json = json_dumps(
             _canonical_legacy_payload(
                 row["payload_json"],
@@ -176,8 +180,8 @@ def _migrate_results(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> Non
                 str(row["timeframe"] or ""),
                 market_id,
                 str(row["result"] or ""),
-                float(row["pnl_usdc"] or 0.0),
-                float(row["roi"] or 0.0),
+                pnl_usdc,
+                roi,
                 str(row["closed_at"] or ""),
                 payload_json,
             ),

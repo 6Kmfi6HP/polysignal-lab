@@ -122,11 +122,8 @@ def average(values: list[float]) -> float | None:
 def confidence_bucket(confidence: Any) -> str:
     if isinstance(confidence, bool):
         return "low"
-    try:
-        value = float(confidence or 0.0)
-    except (OverflowError, TypeError, ValueError):
-        return "low"
-    if not math.isfinite(value):
+    value = optional_float(confidence)
+    if value is None:
         return "low"
     if value >= 0.75:
         return "high"
