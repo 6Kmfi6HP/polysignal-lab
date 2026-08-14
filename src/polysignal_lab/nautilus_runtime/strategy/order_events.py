@@ -5,6 +5,7 @@ import math
 from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
@@ -147,8 +148,11 @@ def _record_completed_early_exit(
     strategy: _OrderEventStrategy,
     metrics: Mapping[str, object],
 ) -> None:
-    position_id = str(metrics.get("position_id") or "")
-    if not position_id:
+    try:
+        position_id = missing_values.identifier(
+            metrics, {}, "position_id", source="_record_completed_early_exit"
+        )
+    except missing_values.MissingIdentifierError:
         strategy._note_runtime_progress("early_exit_result_quarantined")
         return
     try:

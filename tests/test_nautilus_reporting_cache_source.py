@@ -579,7 +579,7 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
                     last_px=0.5,
                     liquidity_side="TAKER",
                     tags=(),
-                    metrics={},
+                    metrics={"signal_id": "sig-native"},
                     ts_event=now,
                 ),
                 SimpleNamespace(
@@ -1302,7 +1302,7 @@ def test_collect_daily_report_inputs_prefers_durable_report_fills_over_cache(
                 last_px=0.5,
                 liquidity_side="TAKER",
                 tags=(),
-                metrics={},
+                metrics={"signal_id": "sig-native"},
                 ts_event=day,
             )
         ]

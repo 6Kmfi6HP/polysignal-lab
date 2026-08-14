@@ -114,13 +114,13 @@ class NativeExitPolicy:
         now: datetime,
         trading: TradingStateView,
     ) -> AlphaDecision | None:
-        position_id = str(getattr(position, "position_id", "") or "")
-        instrument_id = str(getattr(position, "instrument_id", "") or "")
+        position_id = position.position_id
+        instrument_id = position.instrument_id
         quantity = _finite_float(getattr(position, "quantity", None))
         entry_price = _finite_float(getattr(position, "avg_entry_price", None))
         if not position_id or not instrument_id or quantity is None or quantity <= 0:
             return None
-        identity = _position_identity(registry, pair, instrument_id)
+        identity = _position_identity(registry, pair, str(instrument_id))
         if identity is None:
             return None
         token_id, side = identity
@@ -128,7 +128,7 @@ class NativeExitPolicy:
         if bid is None or not math.isfinite(float(bid)) or float(bid) <= 0:
             return None
         opened_at = getattr(position, "opened_at", None)
-        thresholds_for_position = trading.exit_thresholds(position_id)
+        thresholds_for_position = trading.exit_thresholds(str(position_id))
         stamped = PositionExitThresholds(
             take_profit_price=thresholds_for_position[0],
             stop_loss_price=thresholds_for_position[1],
@@ -142,7 +142,7 @@ class NativeExitPolicy:
             now=now,
             thresholds=stamped,
         )
-        if reason is None or trading.has_exit_order(position_id):
+        if reason is None or trading.has_exit_order(str(position_id)):
             return None
         return _build_exit_decision(
             view=view,
@@ -150,7 +150,7 @@ class NativeExitPolicy:
             side=side,
             bid=float(bid),
             reason=reason,
-            position_id=position_id,
+            position_id=str(position_id),
             quantity=quantity,
             entry_price=entry_price,
             opened_at=opened_at,

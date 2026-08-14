@@ -13,6 +13,7 @@ from polysignal_lab.dashboard.ports import (
     RuntimeHealthPort,
     RuntimeHealthRead,
 )
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.market import Market
 from polysignal_lab.storage.event_projection import (
     normalize_report_order,
@@ -248,7 +249,15 @@ def _market_for_row(
     by_id: dict[str, Market],
     by_token: dict[str, Market],
 ) -> Market | None:
-    market_id = str(row.get("market_id") or "")
+    try:
+        market_id = missing_values.identifier(
+            row, {}, "market_id", source="_market_for_row"
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(missing_values.COLLAPSE_COMPONENT, "collapsed_market_id")
+        market_id = ""
     if market_id:
         market = by_id.get(market_id)
         if market is not None:

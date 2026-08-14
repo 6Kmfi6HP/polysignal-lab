@@ -12,6 +12,7 @@ from threading import Lock
 from time import sleep
 from typing import TYPE_CHECKING, Any, Iterable, Literal
 
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.domain.reporting_result import (
@@ -91,8 +92,20 @@ def _payload_json(row: sqlite3.Row) -> Any | None:
 
 
 def _valid_position_event(row: Mapping[str, Any]) -> bool:
-    position_id = str(row.get("report_position_id") or row.get("position_id") or "")
-    if not position_id:
+    try:
+        missing_values.identifier(
+            row,
+            {},
+            "report_position_id",
+            "position_id",
+            source="_valid_position_event",
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(
+                missing_values.COLLAPSE_COMPONENT, "collapsed_report_position_id"
+            )
         return False
     status = str(row.get("status") or "").upper()
     if status not in {"", PositionStatus.OPEN.value, PositionStatus.CLOSED.value}:
@@ -2005,7 +2018,20 @@ class SQLiteStore:
                 payload["status"] = "INVALID"
             table = "report_orders"
             id_column = "report_order_id"
-            record_id = str(payload.get("report_order_id") or "")
+            try:
+                record_id = missing_values.identifier(
+                    payload,
+                    {},
+                    "report_order_id",
+                    source="_upsert_report_current_state",
+                )
+            except missing_values.MissingIdentifierError:
+                counter = missing_values.missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        missing_values.COLLAPSE_COMPONENT, "collapsed_report_order_id"
+                    )
+                return
             payload["report_order_id"] = record_id
         elif event_type == "nautilus_fill":
             self._apply_fill_to_report_order_state(event)
@@ -2019,18 +2045,41 @@ class SQLiteStore:
                     payload["status"] = "INVALID"
             table = "report_positions"
             id_column = "report_position_id"
-            record_id = str(
-                payload.get("report_position_id") or payload.get("position_id") or ""
-            )
+            try:
+                record_id = missing_values.identifier(
+                    payload,
+                    {},
+                    "report_position_id",
+                    "position_id",
+                    source="_upsert_report_current_state",
+                )
+            except missing_values.MissingIdentifierError:
+                counter = missing_values.missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        missing_values.COLLAPSE_COMPONENT,
+                        "collapsed_report_position_id",
+                    )
+                return
             payload["report_position_id"] = record_id
             payload.setdefault("position_id", record_id)
         else:
             return
 
         status = str(payload.get("status") or "").upper()
-        source_event_id = str(event.get("event_id") or "")
+        try:
+            source_event_id = missing_values.identifier(
+                event, {}, "event_id", source="_upsert_report_current_state"
+            )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_event_id"
+                )
+            return
         source_event_at = self._report_state_event_at(event, status=status)
-        if not record_id or not status or not source_event_id or not source_event_at:
+        if not status or not source_event_at:
             return
         if event_type == "nautilus_order":
             existing_row = self._conn.execute(
@@ -2101,23 +2150,49 @@ class SQLiteStore:
 
     def _apply_fill_to_report_order_state(self, event: Mapping[str, Any]) -> None:
         fill = normalize_report_fill(event)
-        order_id = str(
-            fill.get("report_order_id")
-            or event.get("client_order_id")
-            or event.get("report_order_id")
-            or ""
-        )
-        fill_id = str(
-            fill.get("report_fill_id")
-            or event.get("trade_id")
-            or event.get("fill_id")
-            or ""
-        )
-        if not order_id:
+        try:
+            order_id = missing_values.identifier(
+                fill,
+                event,
+                "report_order_id",
+                metric_keys=("client_order_id", "report_order_id"),
+                source="_apply_fill_to_report_order_state",
+            )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_report_order_id"
+                )
             return
-        source_event_id = str(event.get("event_id") or "")
+        try:
+            fill_id = missing_values.identifier(
+                fill,
+                event,
+                "report_fill_id",
+                metric_keys=("trade_id", "fill_id"),
+                source="_apply_fill_to_report_order_state",
+            )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_report_fill_id"
+                )
+            fill_id = ""
+        try:
+            source_event_id = missing_values.identifier(
+                event, {}, "event_id", source="_apply_fill_to_report_order_state"
+            )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_event_id"
+                )
+            return
         source_event_at = self._report_state_event_at(event, status="FILLED")
-        if not source_event_id or not source_event_at:
+        if not source_event_at:
             return
         if fill_id:
             fill["report_fill_id"] = fill_id

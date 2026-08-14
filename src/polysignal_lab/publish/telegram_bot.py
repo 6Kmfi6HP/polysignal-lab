@@ -21,6 +21,7 @@ from telegram.ext import (
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.registries import MarketRegistry
+from polysignal_lab.domain import missing_values
 from polysignal_lab.nautilus_runtime.observability import StrategyControl
 from polysignal_lab.storage.event_projection import report_token_id
 from polysignal_lab.reporting.strategy_stats import build_strategy_leaderboard_rows
@@ -355,7 +356,21 @@ class TelegramBotService:
     def _market_for_position(self, row: dict[str, Any]) -> object | None:
         metrics = row.get("metrics")
         metric_values = metrics if isinstance(metrics, dict) else {}
-        market_id = str(row.get("market_id") or metric_values.get("market_id") or "")
+        try:
+            market_id = missing_values.identifier(
+                row,
+                metric_values,
+                "market_id",
+                metric_keys=("market_id",),
+                source="_market_for_position",
+            )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_market_id"
+                )
+            market_id = ""
         if market_id:
             market = self.markets.get(market_id)
             if market is not None:
@@ -375,7 +390,17 @@ class TelegramBotService:
             )
             if not payload.get("side"):
                 continue
-            token_id = str(payload.get("token_id") or "")
+            try:
+                token_id = missing_values.identifier(
+                    payload, {}, "token_id", source="_format_positions"
+                )
+            except missing_values.MissingIdentifierError:
+                counter = missing_values.missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        missing_values.COLLAPSE_COMPONENT, "collapsed_token_id"
+                    )
+                token_id = ""
             book = self._book_for_token(token_id) if token_id else None
             mark = getattr(book, "best_bid", None) if book is not None else None
             entry_price = float(payload.get("entry_price") or 0.0)

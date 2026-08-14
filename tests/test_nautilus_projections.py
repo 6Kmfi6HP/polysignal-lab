@@ -525,6 +525,7 @@ def test_project_fill_event_accepts_nautilus_price_quantity_objects() -> None:
         last_qty=_FloatLike(12.0),
         last_px=_FloatLike(0.66),
         liquidity_side="TAKER",
+        metrics={"signal_id": "sig-002"},
     )
 
     row = project_fill_event(event)
