@@ -41,8 +41,8 @@ def exit_mode_from_reason(reason: object) -> ExitMode | None:
 def report_result_from_early_exit(
     metrics: Mapping[str, object],
     *,
-    fill_price: float,
-    fill_shares: float,
+    fill_price: float | None,
+    fill_shares: float | None,
     strategy_name: str,
     closed_at: str | None = None,
 ) -> dict[str, Any] | None:
