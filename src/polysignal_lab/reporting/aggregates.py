@@ -11,20 +11,10 @@ from polysignal_lab.domain.reporting_result import (
     trade_result_number,
     trade_result_status,
 )
-from polysignal_lab.domain.missing_values import (
-    COLLAPSE_COMPONENT,
-    missing_value_counter,
-)
+from polysignal_lab.domain.missing_values import count_collapse
 
 CalibrationValue = str | int | float
 CalibrationBreakdown = dict[str, dict[str, CalibrationValue]]
-
-
-def _count_collapse(key: str) -> None:
-    """Record a single missing-value collapse for ``key`` when a counter is bound."""
-    counter = missing_value_counter()
-    if counter is not None:
-        counter.inc_metric(COLLAPSE_COMPONENT, f"collapsed_{key}")
 
 
 def calibration_breakdown(closed_rows: list[Any]) -> CalibrationBreakdown:
@@ -78,7 +68,7 @@ def calibration_breakdown(closed_rows: list[Any]) -> CalibrationBreakdown:
         )
         entry_price = trade_result_number(result, "entry_price")
         if entry_price is None:
-            _count_collapse("entry_price")
+            count_collapse("entry_price")
         else:
             entry_price_sum[key] = entry_price_sum.get(key, 0.0) + entry_price
             entry_price_count[key] = entry_price_count.get(key, 0) + 1

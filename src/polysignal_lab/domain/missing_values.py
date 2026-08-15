@@ -20,6 +20,7 @@ __all__ = [
     "MissingIdentifierError",
     "bind_missing_value_counter",
     "missing_value_counter",
+    "count_collapse",
     "identifier",
     "display",
     "number",
@@ -44,6 +45,17 @@ def bind_missing_value_counter(registry: HealthRegistry | None) -> None:
 def missing_value_counter() -> HealthRegistry | None:
     """Return the process-local missing-value counter, if bound."""
     return _missing_value_counter
+
+
+def count_collapse(key: str) -> None:
+    """Record a single missing-value collapse for ``key`` when a counter is bound.
+
+    When no counter is bound the call is a silent no-op, so callers can always
+    invoke it without guarding against an unbound registry.
+    """
+    counter = missing_value_counter()
+    if counter is not None:
+        counter.inc_metric(COLLAPSE_COMPONENT, f"collapsed_{key}")
 
 
 def _present(value: object) -> bool:
@@ -121,6 +133,4 @@ def set_number(
     if value is not None and math.isfinite(value):
         payload[key] = value
         return
-    counter = missing_value_counter()
-    if counter is not None:
-        counter.inc_metric(COLLAPSE_COMPONENT, f"collapsed_{key}")
+    count_collapse(key)

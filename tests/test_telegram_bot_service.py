@@ -568,7 +568,7 @@ def test_telegram_bot_positions_degrades_missing_numbers_with_na() -> None:
     bind_missing_value_counter(registry)
     try:
         persistence = _FormattingPersistence()
-        position = {
+        position: dict[str, object] = {
             "report_position_id": "pp-3",
             "signal_id": "sig_1",
             "report_order_id": "po_1",
@@ -585,7 +585,7 @@ def test_telegram_bot_positions_degrades_missing_numbers_with_na() -> None:
         }
         persistence.positions = [position]
         service = _formatting_service(persistence)
-        service.books.update(
+        cast(_FakeBooks, service.books).update(
             SideBookView(
                 token_id="token-up",
                 best_bid=0.71,
@@ -788,6 +788,33 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
     assert "Account     987.50 USDC equity" in text
     assert "Signals     142 accepted / 91 rejected" in text
     assert "Strategies  1/2 enabled" in text
+
+
+def test_telegram_bot_status_counts_missing_equity_as_collapse() -> None:
+    from polysignal_lab.domain.missing_values import bind_missing_value_counter
+    from polysignal_lab.observability.health import HealthRegistry
+
+    registry = HealthRegistry()
+    bind_missing_value_counter(registry)
+    try:
+        persistence = _FormattingPersistence()
+        persistence.table_counts = {"signals": 0, "rejected_signals": 0}
+        persistence.wallet = {"cash_balance": 100.0}
+        persistence.health_event = {
+            "status": "ok",
+            "created_at": "2026-06-24T12:00:00Z",
+            "components": [],
+        }
+        service = _formatting_service(persistence)
+
+        text = service._format_status()
+
+        assert "Account     n/a USDC equity" in text
+        components = {c.name: c for c in registry.snapshot().components}
+        metrics = components["missing_values"].metrics
+        assert metrics["collapsed_equity"] == 1
+    finally:
+        bind_missing_value_counter(None)
 
 
 def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:

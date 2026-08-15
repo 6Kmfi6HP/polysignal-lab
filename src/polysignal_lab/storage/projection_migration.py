@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -14,6 +15,8 @@ from polysignal_lab.storage.event_projection import (
 from polysignal_lab.storage.sqlite_schema import PROJECTION_SCHEMA_VERSION
 
 JsonDumper = Callable[[Any], str]
+
+logger = logging.getLogger(__name__)
 
 LEGACY_REPORTING_TABLES = frozenset(
     {
@@ -158,8 +161,29 @@ def _migrate_results(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> Non
             continue
         pnl_usdc = missing_values.number(row, {}, "pnl_usdc")
         roi = missing_values.number(row, {}, "roi")
-        if pnl_usdc is None or roi is None:
-            continue
+        missing_fields = [
+            field
+            for field, value in (("pnl_usdc", pnl_usdc), ("roi", roi))
+            if value is None
+        ]
+        if missing_fields:
+            for field in missing_fields:
+                counter = missing_values.missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        missing_values.COLLAPSE_COMPONENT, f"collapsed_{field}"
+                    )
+            row_id = row.get("paper_trade_id", "<unknown>")
+            fields_str = ", ".join(missing_fields)
+            logger.warning(
+                "paper_trade_results row %s has missing numeric field(s): %s",
+                row_id,
+                fields_str,
+            )
+            raise ValueError(
+                f"paper_trade_results row {row_id!r} has missing required "
+                f"numeric field(s): {fields_str}; cannot migrate silently"
+            )
         payload_json = json_dumps(
             _canonical_legacy_payload(
                 row["payload_json"],

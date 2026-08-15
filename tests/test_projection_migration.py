@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+
+import pytest
+
 from polysignal_lab.storage.event_projection import normalize_report_order
 from polysignal_lab.storage.sqlite_schema import PROJECTION_SCHEMA_VERSION
 from polysignal_lab.storage.sqlite_store import SQLiteStore
@@ -258,3 +261,58 @@ def test_migrate_v5_account_and_daily_report_payload_to_runtime_neutral_names(
     assert not any(key.startswith("paper_") for key in report)
     assert (tmp_path / f"v5.db.pre-report-v{PROJECTION_SCHEMA_VERSION}.bak").exists()
     store.close()
+
+
+def test_migrate_results_missing_pnl_usdc_raises_and_preserves_legacy(
+    tmp_path: Path,
+) -> None:
+    """A row with missing pnl_usdc must abort migration, not silently drop data."""
+    db_path = tmp_path / "missing_pnl.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE paper_trade_results("
+        "paper_trade_id TEXT PRIMARY KEY,signal_id TEXT NOT NULL,"
+        "strategy TEXT NOT NULL,asset TEXT NOT NULL,timeframe TEXT NOT NULL,"
+        "market_id TEXT NOT NULL,result TEXT NOT NULL,pnl_usdc REAL,"
+        "roi REAL NOT NULL,closed_at TEXT NOT NULL,payload_json TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO paper_trade_results VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "ptr-missing",
+            "sig-1",
+            "ptb_diff",
+            "BTC",
+            "5m",
+            "m-1",
+            "WIN",
+            None,
+            0.15,
+            "2026-07-01T01:00:00Z",
+            '{"paper_trade_id":"ptr-missing"}',
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(ValueError, match="pnl_usdc"):
+        SQLiteStore(db_path)
+
+    # Migration must abort before DROP TABLE / PRAGMA user_version so the
+    # legacy data is preserved and the migration can be re-run.
+    check_conn = sqlite3.connect(db_path)
+    tables = {
+        str(row[0])
+        for row in check_conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "paper_trade_results" in tables
+    version = int(check_conn.execute("PRAGMA user_version").fetchone()[0])
+    assert version < PROJECTION_SCHEMA_VERSION
+    # The row is still there — not silently lost.
+    row = check_conn.execute(
+        "SELECT paper_trade_id FROM paper_trade_results"
+    ).fetchone()
+    assert row is not None and row[0] == "ptr-missing"
+    check_conn.close()

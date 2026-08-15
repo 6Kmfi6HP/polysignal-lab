@@ -672,6 +672,12 @@ class TelegramBotService:
         enabled_count = sum(1 for name in strategies if self._is_strategy_enabled(name))
         total_count = len(strategies)
         equity = missing_values.number(account, {}, "equity")
+        if equity is None:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_equity"
+                )
         equity_text = f"{equity:.2f}" if equity is not None else "n/a"
         health_age = self._format_age(health.get("created_at")) if health else "n/a"
         return "\n".join(

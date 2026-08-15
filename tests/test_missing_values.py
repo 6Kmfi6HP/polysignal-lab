@@ -7,6 +7,7 @@ import pytest
 from polysignal_lab.domain.missing_values import (
     MissingIdentifierError,
     bind_missing_value_counter,
+    count_collapse,
     display,
     identifier,
     number,
@@ -121,6 +122,27 @@ def test_collapse_counting_groups_by_field_in_health_registry() -> None:
     }
     assert components["missing_values"].metrics["collapsed_alpha"] == 2
     assert components["missing_values"].metrics["collapsed_beta"] == 1
+
+
+def test_count_collapse_increments_when_counter_bound() -> None:
+    registry = HealthRegistry()
+    bind_missing_value_counter(registry)
+
+    count_collapse("x")
+    count_collapse("x")
+    count_collapse("y")
+
+    components = {
+        component.name: component for component in registry.snapshot().components
+    }
+    metrics = components["missing_values"].metrics
+    assert metrics["collapsed_x"] == 2
+    assert metrics["collapsed_y"] == 1
+
+
+def test_count_collapse_is_silent_when_unbound() -> None:
+    # No counter bound — must not raise.
+    count_collapse("unbound")
 
 
 def test_report_order_projection_counts_collapsed_numbers_through_vocabulary() -> None:
