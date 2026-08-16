@@ -160,3 +160,59 @@ def test_early_exit_ignores_non_exit_fills() -> None:
         )
         is None
     )
+
+
+BASE_EARLY_EXIT_METRICS: dict[str, object] = {
+    "exit_reason": "TAKE_PROFIT",
+    "position_id": "position-early-exit",
+    "entry_price": 0.40,
+    "position_quantity": 10.0,
+    "stake_usdc": 4.0,
+    "side": "UP",
+    "asset": "BTC",
+    "timeframe": "5m",
+    "market_id": "mkt-1",
+    "market_slug": "btc-updown-5m",
+}
+
+
+def test_early_exit_missing_or_zero_fill_price_returns_none() -> None:
+    assert (
+        report_result_from_early_exit(
+            BASE_EARLY_EXIT_METRICS,
+            fill_price=None,
+            fill_shares=10.0,
+            strategy_name="ptb_diff",
+        )
+        is None
+    )
+    assert (
+        report_result_from_early_exit(
+            BASE_EARLY_EXIT_METRICS,
+            fill_price=0.0,
+            fill_shares=10.0,
+            strategy_name="ptb_diff",
+        )
+        is None
+    )
+
+
+def test_early_exit_missing_or_zero_fill_shares_returns_none() -> None:
+    assert (
+        report_result_from_early_exit(
+            BASE_EARLY_EXIT_METRICS,
+            fill_price=0.91,
+            fill_shares=None,
+            strategy_name="ptb_diff",
+        )
+        is None
+    )
+    assert (
+        report_result_from_early_exit(
+            BASE_EARLY_EXIT_METRICS,
+            fill_price=0.91,
+            fill_shares=0.0,
+            strategy_name="ptb_diff",
+        )
+        is None
+    )

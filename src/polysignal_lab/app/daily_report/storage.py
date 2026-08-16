@@ -4,6 +4,7 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.reporting_result import DailyReport
 
 
@@ -12,7 +13,17 @@ def delete_report_result_rows(
     result: Mapping[str, Any],
     publish_payload: dict[str, str | None] | None,
 ) -> None:
-    report_result_id = str(result.get("report_result_id") or "")
+    try:
+        report_result_id = missing_values.identifier(
+            result, {}, "report_result_id", source="delete_report_result_rows"
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(
+                missing_values.COLLAPSE_COMPONENT, "collapsed_report_result_id"
+            )
+        return
     try:
         scheduler.persistence.delete_report_result_rows(
             report_result_id,

@@ -6,6 +6,7 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from polysignal_lab.app.daily_report.types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.domain import missing_values
 from polysignal_lab.reporting.rejections import is_rejected_order_payload
 from polysignal_lab.utils import parse_dt
 
@@ -50,14 +51,18 @@ def _fill_payloads_with_order_intents(
     orders: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     today_order_ids = {
-        str(order.get("report_order_id") or "")
+        missing_values.identifier(
+            order, {}, "report_order_id", source="_fill_payloads_with_order_intents"
+        )
         for order in orders
         if order.get("report_order_id")
     }
     missing_order_ids = tuple(
         sorted(
             {
-                str(fill.get("report_order_id") or "")
+                missing_values.identifier(
+                    fill, {}, "report_order_id", source="_fill_payloads_with_order_intents"
+                )
                 for fill in fills
                 if fill.get("report_order_id")
             }
@@ -75,7 +80,9 @@ def _fill_payloads_with_order_intents(
         limit=len(missing_order_ids),
     )
     orders_by_id = {
-        str(order.get("report_order_id") or ""): order
+        missing_values.identifier(
+            order, {}, "report_order_id", source="_fill_payloads_with_order_intents"
+        ): order
         for order in fill_orders
         if order.get("report_order_id")
     }
@@ -84,7 +91,22 @@ def _fill_payloads_with_order_intents(
 
     enriched: list[dict[str, Any]] = []
     for fill in fills:
-        order = orders_by_id.get(str(fill.get("report_order_id") or ""))
+        try:
+            fill_order_id = missing_values.identifier(
+                fill,
+                {},
+                "report_order_id",
+                source="_fill_payloads_with_order_intents",
+            )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_report_order_id"
+                )
+            enriched.append(fill)
+            continue
+        order = orders_by_id.get(fill_order_id)
         if order is None:
             enriched.append(fill)
             continue
@@ -157,6 +179,14 @@ def _nautilus_fill_rows_for_day(
             timestamp = parse_dt(
                 cast(str | datetime | None, row.get("ts") or row.get("created_at"))
             )
+        except missing_values.MissingIdentifierError:
+            counter = missing_values.missing_value_counter()
+            if counter is not None:
+                counter.inc_metric(
+                    missing_values.COLLAPSE_COMPONENT, "collapsed_signal_id"
+                )
+            invalid_rows += 1
+            continue
         except (OSError, OverflowError, RuntimeError, TypeError, ValueError):
             invalid_rows += 1
             continue
@@ -413,7 +443,9 @@ def _collect_daily_report_inputs(
         if order.get("_creation_event_at_inferred") is True
     )
     invalid_order_ids = {
-        str(order.get("report_order_id") or "")
+        missing_values.identifier(
+            order, {}, "report_order_id", source="_collect_daily_report_inputs"
+        )
         for order in today_order_states + invalid_updated_order_states
         if order.get("_projection_invalid") is True and order.get("report_order_id")
     }

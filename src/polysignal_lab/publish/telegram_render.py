@@ -107,22 +107,6 @@ def position_display_payload(
     *,
     market: object | None = None,
 ) -> dict[str, Any]:
-    payload = normalize_report_position(row, market=market)
-    return {
-        **payload,
-        "entry_price": row_float(payload, "entry_price") or 0.0,
-        "shares": row_float(payload, "shares") or 0.0,
-        "stake_usdc": row_float(payload, "stake_usdc") or 0.0,
-    }
-
-
-def row_float(row: dict[str, Any], *keys: str) -> float | None:
-    for key in keys:
-        value = row.get(key)
-        if value is None or value == "":
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
+    # normalize_report_position already converges missing numbers via
+    # set_number: values stay as floats, missing keys are omitted and counted.
+    return normalize_report_position(row, market=market)

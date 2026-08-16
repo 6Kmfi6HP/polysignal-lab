@@ -5,6 +5,7 @@ import math
 from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
@@ -128,13 +129,16 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
             order=order,
         )
     except ValueError:
+        # #77: fabricated fill truth (missing/zero price or shares) raises in
+        # projection; quarantine + progress count is the supervision-observable
+        # boundary (pyo3 callbacks drop raised exceptions, contract.md §3.3).
         strategy._note_runtime_progress("fill_event_quarantined")
         return
     if should_notify_fill(strategy, metrics):
         notify = getattr(strategy.core, "on_notify_fill", None)
         if callable(notify):
             side = fill_side(metrics)
-            shares = float(metrics.get("shares") or 0.0)
+            shares = float(cast(float, metrics["shares"]))
             _ = notify(str(metrics.get("market_id") or ""), side, shares)
     strategy._record_nautilus_fill(event, metrics)
     if bool(metrics.get("reduce_only")):
@@ -147,8 +151,11 @@ def _record_completed_early_exit(
     strategy: _OrderEventStrategy,
     metrics: Mapping[str, object],
 ) -> None:
-    position_id = str(metrics.get("position_id") or "")
-    if not position_id:
+    try:
+        position_id = missing_values.identifier(
+            metrics, {}, "position_id", source="_record_completed_early_exit"
+        )
+    except missing_values.MissingIdentifierError:
         strategy._note_runtime_progress("early_exit_result_quarantined")
         return
     try:
@@ -244,10 +251,13 @@ def _record_early_exit_result(
             closed_at = ts.isoformat()
         except AttributeError:
             closed_at = None
+    # #77 site6/7: persistence is a bypass (SPEC D1/US15) — pass missing values
+    # through unchanged; report_result_from_early_exit quarantines them instead
+    # of fabricating a zero or raising (avoids restart/replay crash loops).
     result = report_result_from_early_exit(
         payload,
-        fill_price=float(payload.get("fill_price") or 0.0),
-        fill_shares=float(payload.get("shares") or 0.0),
+        fill_price=cast(float | None, payload.get("fill_price")),
+        fill_shares=cast(float | None, payload.get("shares")),
         strategy_name=strategy.strategy_name,
         closed_at=closed_at or utc_iso(),
     )

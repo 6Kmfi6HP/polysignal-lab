@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
@@ -203,3 +205,238 @@ def test_active_dedupe_guard_reads_cache_order_tags() -> None:
         strategy_id="PolySignal-Composite",
         dedupe_key="signal-key",
     )
+
+
+def test_order_with_missing_filled_qty_raises() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    entry = SimpleNamespace(
+        client_order_id="entry-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        tags=("strategy=dump_hedge",),
+        status="ACCEPTED",
+        price=0.40,
+        avg_px=None,
+        ts_last=1_000_000_000,
+        is_open=True,
+        is_inflight=False,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [entry]
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return []
+
+    with pytest.raises(ValueError, match="filled_qty"):
+        _ = trading_state_from_cache(
+            Cache(),
+            strategy_id="PolySignal-Composite",
+            registry=_catalog(),
+        )
+
+
+def test_unfilled_order_keeps_zero_filled_quantity() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    entry = SimpleNamespace(
+        client_order_id="entry-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        tags=("strategy=dump_hedge",),
+        status="ACCEPTED",
+        price=0.40,
+        filled_qty=0.0,
+        avg_px=None,
+        ts_last=1_000_000_000,
+        is_open=True,
+        is_inflight=False,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [entry]
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return []
+
+    state = trading_state_from_cache(
+        Cache(),
+        strategy_id="PolySignal-Composite",
+        registry=_catalog(),
+    )
+
+    assert state.orders[0].filled_quantity == 0.0
+    assert state.orders[0].has_fill is False
+
+
+def test_position_with_missing_signed_qty_raises() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    position = SimpleNamespace(
+        id="position-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        avg_px_open=0.40,
+        ts_opened=1_000_000_000,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return []
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [position]
+
+    with pytest.raises(ValueError, match="signed_qty"):
+        _ = trading_state_from_cache(
+            Cache(),
+            strategy_id="PolySignal-Composite",
+            registry=_catalog(),
+        )
+
+
+def test_zero_quantity_position_is_not_treated_as_missing() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    entry = SimpleNamespace(
+        client_order_id="entry-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        tags=("strategy=dump_hedge",),
+        status="FILLED",
+        price=0.40,
+        filled_qty=10.0,
+        avg_px=0.40,
+        ts_last=1_000_000_000,
+        is_open=False,
+        is_inflight=False,
+    )
+    position = SimpleNamespace(
+        id="position-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        signed_qty=0.0,
+        avg_px_open=0.40,
+        ts_opened=1_000_000_000,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [entry]
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [position]
+
+        def orders_for_position(self, position_id: object) -> list[object]:
+            assert str(position_id) == "position-1"
+            return [entry]
+
+    state = trading_state_from_cache(
+        Cache(),
+        strategy_id="PolySignal-Composite",
+        registry=_catalog(),
+    )
+
+    assert state.positions == ()
+
+
+def test_position_with_missing_avg_px_open_raises() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    position = SimpleNamespace(
+        id="position-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        signed_qty=10.0,
+        ts_opened=1_000_000_000,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return []
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [position]
+
+    with pytest.raises(ValueError, match="avg_px_open"):
+        _ = trading_state_from_cache(
+            Cache(),
+            strategy_id="PolySignal-Composite",
+            registry=_catalog(),
+        )
+
+
+def test_position_with_zero_avg_px_open_raises() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    position = SimpleNamespace(
+        id="position-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        signed_qty=10.0,
+        avg_px_open=0.0,
+        ts_opened=1_000_000_000,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return []
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [position]
+
+    with pytest.raises(ValueError, match="avg_px_open"):
+        _ = trading_state_from_cache(
+            Cache(),
+            strategy_id="PolySignal-Composite",
+            registry=_catalog(),
+        )
+
+def test_position_with_non_finite_avg_px_open_raises() -> None:
+    from polysignal_lab.nautilus_runtime.cache_trading_state import (
+        trading_state_from_cache,
+    )
+
+    position = SimpleNamespace(
+        id="position-1",
+        instrument_id="condition-1-up-token.POLYMARKET",
+        signed_qty=10.0,
+        avg_px_open=float("nan"),
+        ts_opened=1_000_000_000,
+    )
+
+    class Cache:
+        def orders(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return []
+
+        def positions_open(self, **kwargs: object) -> list[object]:
+            assert kwargs == {"strategy_id": "PolySignal-Composite"}
+            return [position]
+
+    with pytest.raises(ValueError, match="avg_px_open"):
+        _ = trading_state_from_cache(
+            Cache(),
+            strategy_id="PolySignal-Composite",
+            registry=_catalog(),
+        )

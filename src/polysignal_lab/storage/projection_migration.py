@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from polysignal_lab.domain import missing_values
 from polysignal_lab.storage.event_projection import (
     normalize_report_fill,
     normalize_report_order,
@@ -13,6 +15,8 @@ from polysignal_lab.storage.event_projection import (
 from polysignal_lab.storage.sqlite_schema import PROJECTION_SCHEMA_VERSION
 
 JsonDumper = Callable[[Any], str]
+
+logger = logging.getLogger(__name__)
 
 LEGACY_REPORTING_TABLES = frozenset(
     {
@@ -62,9 +66,15 @@ def _migrate_orders(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> None
                   source_event_id,payload_json
            FROM paper_order_states"""
     ).fetchall()
-    for row in rows:
-        order_id = str(row["paper_order_id"] or "")
-        if not order_id:
+    for row in map(dict, rows):
+        try:
+            order_id = missing_values.identifier(
+                row, {}, "paper_order_id", source="projection_migration"
+            )
+            source_event_id = missing_values.identifier(
+                row, {}, "source_event_id", source="projection_migration"
+            )
+        except missing_values.MissingIdentifierError:
             continue
         conn.execute(
             """INSERT INTO report_orders(
@@ -77,7 +87,7 @@ def _migrate_orders(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> None
                 str(row["status"] or ""),
                 str(row["created_event_at"] or ""),
                 str(row["source_event_at"] or ""),
-                str(row["source_event_id"] or ""),
+                source_event_id,
                 json_dumps(
                     _canonical_legacy_payload(
                         row["payload_json"],
@@ -95,9 +105,15 @@ def _migrate_positions(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> N
         """SELECT paper_position_id,status,source_event_at,source_event_id,payload_json
            FROM paper_position_states"""
     ).fetchall()
-    for row in rows:
-        position_id = str(row["paper_position_id"] or "")
-        if not position_id:
+    for row in map(dict, rows):
+        try:
+            position_id = missing_values.identifier(
+                row, {}, "paper_position_id", source="projection_migration"
+            )
+            source_event_id = missing_values.identifier(
+                row, {}, "source_event_id", source="projection_migration"
+            )
+        except missing_values.MissingIdentifierError:
             continue
         conn.execute(
             """INSERT INTO report_positions(
@@ -108,7 +124,7 @@ def _migrate_positions(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> N
                 position_id,
                 str(row["status"] or ""),
                 str(row["source_event_at"] or ""),
-                str(row["source_event_id"] or ""),
+                source_event_id,
                 json_dumps(
                     _canonical_legacy_payload(
                         row["payload_json"],
@@ -127,10 +143,47 @@ def _migrate_results(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> Non
                   result,pnl_usdc,roi,closed_at,payload_json
            FROM paper_trade_results"""
     ).fetchall()
-    for row in rows:
-        result_id = str(row["paper_trade_id"] or "")
-        if not result_id:
+    for row in map(dict, rows):
+        try:
+            result_id = missing_values.identifier(
+                row, {}, "paper_trade_id", source="projection_migration"
+            )
+            signal_id = missing_values.identifier(
+                row, {}, "signal_id", source="projection_migration"
+            )
+            strategy = missing_values.identifier(
+                row, {}, "strategy", source="projection_migration"
+            )
+            market_id = missing_values.identifier(
+                row, {}, "market_id", source="projection_migration"
+            )
+        except missing_values.MissingIdentifierError:
             continue
+        pnl_usdc = missing_values.number(row, {}, "pnl_usdc")
+        roi = missing_values.number(row, {}, "roi")
+        missing_fields = [
+            field
+            for field, value in (("pnl_usdc", pnl_usdc), ("roi", roi))
+            if value is None
+        ]
+        if missing_fields:
+            for field in missing_fields:
+                counter = missing_values.missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        missing_values.COLLAPSE_COMPONENT, f"collapsed_{field}"
+                    )
+            row_id = row.get("paper_trade_id", "<unknown>")
+            fields_str = ", ".join(missing_fields)
+            logger.warning(
+                "paper_trade_results row %s has missing numeric field(s): %s",
+                row_id,
+                fields_str,
+            )
+            raise ValueError(
+                f"paper_trade_results row {row_id!r} has missing required "
+                f"numeric field(s): {fields_str}; cannot migrate silently"
+            )
         payload_json = json_dumps(
             _canonical_legacy_payload(
                 row["payload_json"],
@@ -145,14 +198,14 @@ def _migrate_results(conn: sqlite3.Connection, *, json_dumps: JsonDumper) -> Non
             ON CONFLICT(report_result_id) DO NOTHING""",
             (
                 result_id,
-                str(row["signal_id"] or ""),
-                str(row["strategy"] or ""),
+                signal_id,
+                strategy,
                 str(row["asset"] or ""),
                 str(row["timeframe"] or ""),
-                str(row["market_id"] or ""),
+                market_id,
                 str(row["result"] or ""),
-                float(row["pnl_usdc"] or 0.0),
-                float(row["roi"] or 0.0),
+                pnl_usdc,
+                roi,
                 str(row["closed_at"] or ""),
                 payload_json,
             ),
@@ -223,18 +276,23 @@ def _migrate_fills_from_system_events(
            WHERE event_type='nautilus_fill'
            ORDER BY created_at,event_id"""
     ).fetchall()
-    for row in rows:
+    for row in map(dict, rows):
         raw_payload = _loads(row["payload_json"])
         if not isinstance(raw_payload, Mapping):
             continue
         payload = _canonical_legacy_payload(raw_payload)
         fill = normalize_report_fill(payload)
-        fill_id = str(fill.get("report_fill_id") or "")
-        order_id = str(fill.get("report_order_id") or "")
+        try:
+            fill_id = missing_values.identifier(
+                fill, {}, "report_fill_id", source="projection_migration"
+            )
+            order_id = missing_values.identifier(
+                fill, {}, "report_order_id", source="projection_migration"
+            )
+        except missing_values.MissingIdentifierError:
+            continue
         source_event_id = str(payload.get("event_id") or fill_id)
         source_event_at = str(payload.get("ts") or payload.get("created_at") or "")
-        if not fill_id or not order_id or not source_event_id:
-            continue
         # Touch normalize helpers so order/position shapes stay consistent if present.
         _ = normalize_report_order(payload)
         _ = normalize_report_position(payload)

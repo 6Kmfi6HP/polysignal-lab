@@ -9,6 +9,8 @@ from typing import Any
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.missing_values import (
     COLLAPSE_COMPONENT,
+    MissingIdentifierError,
+    identifier,
     missing_value_counter,
 )
 from polysignal_lab.domain.reporting_result import (
@@ -198,7 +200,17 @@ class DailyReportService:
             intent = str(
                 metrics.get("order_intent") or order.get("order_intent") or "default"
             )
-            order_id = str(order.get("report_order_id") or "")
+            try:
+                order_id = identifier(
+                    order, {}, "report_order_id", source="_execution_aggregates"
+                )
+            except MissingIdentifierError:
+                counter = missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        COLLAPSE_COMPONENT, "collapsed_report_order_id"
+                    )
+                order_id = ""
             if order_id:
                 order_intents[order_id] = intent
             attempts[intent] += 1
@@ -225,7 +237,17 @@ class DailyReportService:
         fills_by_intent: Counter[str] = Counter()
         partial_by_intent: Counter[str] = Counter()
         for fill in fills:
-            order_id = str(fill.get("report_order_id") or "")
+            try:
+                order_id = identifier(
+                    fill, {}, "report_order_id", source="_execution_aggregates"
+                )
+            except MissingIdentifierError:
+                counter = missing_value_counter()
+                if counter is not None:
+                    counter.inc_metric(
+                        COLLAPSE_COMPONENT, "collapsed_report_order_id"
+                    )
+                order_id = ""
             intent = str(
                 fill.get("order_intent") or order_intents.get(order_id, "default")
             )

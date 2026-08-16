@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+import math
 from typing import Any
 
 from polysignal_lab.domain.enums import Side
@@ -139,19 +140,19 @@ def project_fill_metrics(
     fill_price = _maybe_float(
         _value(event, "fill_price", _value(event, "last_px", _value(event, "price")))
     )
-    if fill_price is None or fill_price <= 0.0:
+    if fill_price is None or not math.isfinite(fill_price) or fill_price <= 0.0:
         raise ValueError(
-            "missing positive fill price; refusing fabricated execution truth"
+            "missing positive fill_price; refusing fabricated execution truth"
         )
     metrics["fill_price"] = fill_price
-    metrics["shares"] = (
-        _maybe_float(
-            _value(
-                event, "shares", _value(event, "last_qty", _value(event, "quantity"))
-            )
-        )
-        or 0.0
+    fill_shares = _maybe_float(
+        _value(event, "shares", _value(event, "last_qty", _value(event, "quantity")))
     )
+    if fill_shares is None or not math.isfinite(fill_shares) or fill_shares <= 0.0:
+        raise ValueError(
+            "missing positive fill_shares; refusing fabricated execution truth"
+        )
+    metrics["shares"] = fill_shares
     metrics["liquidity_side"] = _optional_str(_value(event, "liquidity_side"))
     return metrics
 

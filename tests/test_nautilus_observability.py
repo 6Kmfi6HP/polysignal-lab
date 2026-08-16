@@ -883,7 +883,7 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
             last_qty=10.0,
             last_px=0.01,
             liquidity_side="TAKER",
-            metrics={"level_price": 0.01},
+            metrics={"level_price": 0.01, "signal_id": "sig-001"},
         )
     )
     actor.record_nautilus_position(

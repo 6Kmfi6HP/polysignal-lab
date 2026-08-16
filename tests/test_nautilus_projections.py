@@ -435,6 +435,204 @@ def test_tagless_cache_miss_fill_is_quarantined() -> None:
     assert "fill_event_quarantined" in strategy.progress
 
 
+def test_project_fill_metrics_raises_on_missing_shares() -> None:
+    event = SimpleNamespace(
+        ts_event=1_788_451_200_123_456_789,
+        side="UP",
+        last_px=0.5,
+    )
+
+    with pytest.raises(ValueError, match="shares"):
+        event_projection.project_fill_metrics(
+            event,
+            registry=None,
+            strategy_name="alpha",
+        )
+
+
+def test_project_fill_metrics_raises_on_zero_shares() -> None:
+    event = SimpleNamespace(
+        ts_event=1_788_451_200_123_456_789,
+        side="UP",
+        last_px=0.5,
+        last_qty=0.0,
+    )
+
+    with pytest.raises(ValueError, match="shares"):
+        event_projection.project_fill_metrics(
+            event,
+            registry=None,
+            strategy_name="alpha",
+        )
+
+def test_project_fill_metrics_raises_on_non_finite_shares() -> None:
+    event = SimpleNamespace(
+        ts_event=1_788_451_200_123_456_789,
+        side="UP",
+        last_px=0.5,
+        last_qty=float("nan"),
+    )
+
+    with pytest.raises(ValueError, match="shares"):
+        event_projection.project_fill_metrics(
+            event,
+            registry=None,
+            strategy_name="alpha",
+        )
+
+
+def test_project_fill_metrics_raises_on_missing_fill_price() -> None:
+    event = SimpleNamespace(
+        ts_event=1_788_451_200_123_456_789,
+        side="UP",
+        last_qty=1.0,
+    )
+
+    with pytest.raises(ValueError, match="fill_price"):
+        event_projection.project_fill_metrics(
+            event,
+            registry=None,
+            strategy_name="alpha",
+        )
+
+
+def test_fill_with_missing_quantity_is_quarantined() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
+
+    order = SimpleNamespace(
+        tags=(
+            "strategy=alpha",
+            "condition_id=condition-btc-5m",
+        )
+    )
+
+    class Cache:
+        def order(self, client_order_id: object) -> object:
+            _ = client_order_id
+            return order
+
+    class Strategy:
+        registry = None
+        strategy_name = "alpha"
+        _active_condition_ids = {"condition-btc-5m"}
+        observability = None
+        cache: object = Cache()
+        core: object = SimpleNamespace()
+
+        def __init__(self) -> None:
+            self.recorded: list[object] = []
+            self.progress: list[str] = []
+
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
+            self.progress.append(phase)
+
+        def _record_nautilus_fill(
+            self, event: object, metrics: Mapping[str, object]
+        ) -> None:
+            _ = event, metrics
+            self.recorded.append(metrics)
+
+    strategy = Strategy()
+    handle_order_filled(
+        strategy,  # pyright: ignore[reportArgumentType]
+        SimpleNamespace(
+            client_order_id="client-order-1",
+            instrument_id="up-token.POLYMARKET",
+            ts_event=1_788_451_200_123_456_789,
+            last_px=0.5,
+            side="UP",
+        ),
+    )
+
+    assert strategy.recorded == []
+    assert "fill_event_quarantined" in strategy.progress
+
+
+def test_fill_notify_receives_projected_shares() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
+
+    order = SimpleNamespace(
+        tags=(
+            "strategy=alpha",
+            "condition_id=condition-btc-5m",
+        )
+    )
+
+    class Cache:
+        def order(self, client_order_id: object) -> object:
+            _ = client_order_id
+            return order
+
+    class Strategy:
+        registry = None
+        strategy_name = "alpha"
+        _active_condition_ids = {"condition-btc-5m"}
+        observability = None
+        cache: object = Cache()
+
+        def __init__(self) -> None:
+            self.recorded: list[dict[str, object]] = []
+            self.notified: list[float] = []
+            self.core: object = SimpleNamespace(
+                on_notify_fill=lambda market_id, side, shares: self.notified.append(
+                    shares
+                )
+            )
+
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
+            _ = phase, active_condition_ids
+
+        def _record_nautilus_fill(
+            self, event: object, metrics: Mapping[str, object]
+        ) -> None:
+            _ = event
+            self.recorded.append(dict(metrics))
+
+        def _record_nautilus_order(
+            self, event: object, metrics: Mapping[str, object]
+        ) -> None:
+            _ = event, metrics
+
+        def _record_nautilus_position(self, position: object) -> None:
+            _ = position
+
+        def _require_assembler(self) -> object:
+            return object()
+
+        def _handle_decision(self, decision: object, view: object) -> None:
+            _ = decision, view
+
+    strategy = Strategy()
+    handle_order_filled(
+        strategy,  # pyright: ignore[reportArgumentType]
+        SimpleNamespace(
+            client_order_id="client-order-1",
+            instrument_id="up-token.POLYMARKET",
+            ts_event=1_788_451_200_123_456_789,
+            last_px=0.5,
+            last_qty=10.0,
+            side="UP",
+        ),
+    )
+
+    assert strategy.notified == [10.0]
+    assert strategy.recorded[0]["shares"] == 10.0
+
+
 class _FloatLike:
     def __init__(self, value: float) -> None:
         self.value = value
@@ -525,6 +723,7 @@ def test_project_fill_event_accepts_nautilus_price_quantity_objects() -> None:
         last_qty=_FloatLike(12.0),
         last_px=_FloatLike(0.66),
         liquidity_side="TAKER",
+        metrics={"signal_id": "sig-002"},
     )
 
     row = project_fill_event(event)

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import math
 from typing import Any, TypedDict
 
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.utils import stable_hash, utc_iso
 
@@ -40,8 +41,8 @@ def exit_mode_from_reason(reason: object) -> ExitMode | None:
 def report_result_from_early_exit(
     metrics: Mapping[str, object],
     *,
-    fill_price: float,
-    fill_shares: float,
+    fill_price: float | None,
+    fill_shares: float | None,
     strategy_name: str,
     closed_at: str | None = None,
 ) -> dict[str, Any] | None:
@@ -50,8 +51,16 @@ def report_result_from_early_exit(
     if exit_mode is None:
         return None
 
-    position_id = str(metrics.get("position_id") or "").strip()
-    if not position_id:
+    try:
+        position_id = missing_values.identifier(
+            metrics, {}, "position_id", source="report_result_from_early_exit"
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(
+                missing_values.COLLAPSE_COMPONENT, "collapsed_position_id"
+            )
         return None
 
     entry_price = _positive_float(metrics.get("entry_price"))
@@ -96,15 +105,33 @@ def report_result_from_early_exit(
     if not side:
         return None
 
-    market_id = str(metrics.get("market_id") or "").strip()
+    try:
+        market_id = missing_values.identifier(
+            metrics, {}, "market_id", source="report_result_from_early_exit"
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(
+                missing_values.COLLAPSE_COMPONENT, "collapsed_market_id"
+            )
+        return None
     market_slug = str(metrics.get("market_slug") or "").strip()
     asset = str(metrics.get("asset") or "").strip()
     timeframe = str(metrics.get("timeframe") or "").strip()
-    if not market_id or not market_slug or not asset or not timeframe:
+    if not market_slug or not asset or not timeframe:
         return None
 
-    signal_id = str(metrics.get("signal_id") or "").strip()
-    if not signal_id:
+    try:
+        signal_id = missing_values.identifier(
+            metrics, {}, "signal_id", source="report_result_from_early_exit"
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(
+                missing_values.COLLAPSE_COMPONENT, "collapsed_signal_id"
+            )
         signal_id = f"native_exit:{position_id}"
 
     strategy = str(

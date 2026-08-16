@@ -4,6 +4,7 @@ import math
 from datetime import datetime
 from typing import Any, cast
 
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.domain.market import Market
 from polysignal_lab.reporting.exit_result import fee_fields_v1
@@ -47,7 +48,19 @@ def report_result_from_projection(
     entry_fee = float(fee["entry_fee"])
     settlement_value = quantity * outcome
     pnl = settlement_value - stake - entry_fee
-    token_id = str(projection.get("token_id") or projection.get("instrument_id") or "")
+    try:
+        token_id = missing_values.identifier(
+            projection,
+            {},
+            "token_id",
+            "instrument_id",
+            source="report_result_from_projection",
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(missing_values.COLLAPSE_COMPONENT, "collapsed_token_id")
+        return None
     side = _projection_side(projection, market, token_id)
     if side is None:
         return None
@@ -75,14 +88,35 @@ def report_result_from_projection(
     result_details = dict(details)
     result_details.setdefault("fee_model", fee["fee_model"])
     result_details.setdefault("entry_fee", entry_fee)
-    position_id = str(
-        projection.get("report_position_id") or projection.get("position_id") or ""
-    )
+    try:
+        position_id = missing_values.identifier(
+            projection,
+            {},
+            "report_position_id",
+            "position_id",
+            source="report_result_from_projection",
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(
+                missing_values.COLLAPSE_COMPONENT, "collapsed_report_position_id"
+            )
+        return None
+    try:
+        signal_id = missing_values.identifier(
+            projection, {}, "signal_id", source="report_result_from_projection"
+        )
+    except missing_values.MissingIdentifierError:
+        counter = missing_values.missing_value_counter()
+        if counter is not None:
+            counter.inc_metric(missing_values.COLLAPSE_COMPONENT, "collapsed_signal_id")
+        return None
     trade_id = new_id("rr")
     return {
         "schema_version": 1,
         "report_result_id": trade_id,
-        "signal_id": str(projection.get("signal_id") or ""),
+        "signal_id": signal_id,
         "report_position_id": position_id,
         "strategy": str(projection.get("strategy") or market.asset),
         "asset": str(projection.get("asset") or market.asset),

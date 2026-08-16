@@ -11,6 +11,7 @@ from pydantic import JsonValue
 from polysignal_lab.config import MarketConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.domain.missing_values import count_collapse
 
 JsonObject = dict[str, JsonValue]
 # Match Nautilus Polymarket gamma_markets page cap. Requesting >100 makes the
@@ -284,9 +285,11 @@ def is_allowed_window(
     if market.start_ts is None or market.end_ts is None:
         return True
     grace_window = timedelta(seconds=max(int(stale_grace_sec), 0))
-    future_seconds = max(int(include_next_periods), 0) * (
-        timeframe_seconds(market.timeframe) or 0
-    )
+    period_seconds = timeframe_seconds(market.timeframe)
+    if period_seconds is None:
+        count_collapse("timeframe_seconds")
+        period_seconds = 0
+    future_seconds = max(int(include_next_periods), 0) * period_seconds
     future_window = timedelta(seconds=future_seconds)
     return (
         market.start_ts <= now + future_window and market.end_ts >= now - grace_window

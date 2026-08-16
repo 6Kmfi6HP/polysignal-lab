@@ -560,6 +560,57 @@ def test_telegram_bot_positions_shows_mark_na_without_live_book() -> None:
     assert "PnL       n/a" in text
 
 
+def test_telegram_bot_positions_degrades_missing_numbers_with_na() -> None:
+    from polysignal_lab.domain.missing_values import bind_missing_value_counter
+    from polysignal_lab.observability.health import HealthRegistry
+
+    registry = HealthRegistry()
+    bind_missing_value_counter(registry)
+    try:
+        persistence = _FormattingPersistence()
+        position: dict[str, object] = {
+            "report_position_id": "pp-3",
+            "signal_id": "sig_1",
+            "report_order_id": "po_1",
+            "report_fill_id": "pf_1",
+            "strategy": "vwap_momentum",
+            "asset": "BTC",
+            "timeframe": "15m",
+            "market_id": "m_1",
+            "market_slug": "btc-15m",
+            "token_id": "token-up",
+            "side": Side.UP.value,
+            "opened_at": datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc).isoformat(),
+            "status": PositionStatus.OPEN.value,
+        }
+        persistence.positions = [position]
+        service = _formatting_service(persistence)
+        cast(_FakeBooks, service.books).update(
+            SideBookView(
+                token_id="token-up",
+                best_bid=0.71,
+                best_ask=0.72,
+                spread=0.01,
+                freshness_ms=0,
+                ask_levels=((0.72, 100.0),),
+            )
+        )
+
+        text = service._format_positions()
+
+        assert "Entry     n/a" in text
+        assert "Mark      0.7100" in text
+        assert "Shares    n/a" in text
+        assert "PnL       n/a" in text
+        components = {c.name: c for c in registry.snapshot().components}
+        metrics = components["missing_values"].metrics
+        assert metrics["collapsed_entry_price"] == 1
+        assert metrics["collapsed_shares"] == 1
+        assert metrics["collapsed_stake_usdc"] == 1
+    finally:
+        bind_missing_value_counter(None)
+
+
 def test_telegram_bot_positions_accepts_projected_nautilus_rows() -> None:
     persistence = _FormattingPersistence()
     persistence.positions = [
@@ -737,6 +788,33 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
     assert "Account     987.50 USDC equity" in text
     assert "Signals     142 accepted / 91 rejected" in text
     assert "Strategies  1/2 enabled" in text
+
+
+def test_telegram_bot_status_counts_missing_equity_as_collapse() -> None:
+    from polysignal_lab.domain.missing_values import bind_missing_value_counter
+    from polysignal_lab.observability.health import HealthRegistry
+
+    registry = HealthRegistry()
+    bind_missing_value_counter(registry)
+    try:
+        persistence = _FormattingPersistence()
+        persistence.table_counts = {"signals": 0, "rejected_signals": 0}
+        persistence.wallet = {"cash_balance": 100.0}
+        persistence.health_event = {
+            "status": "ok",
+            "created_at": "2026-06-24T12:00:00Z",
+            "components": [],
+        }
+        service = _formatting_service(persistence)
+
+        text = service._format_status()
+
+        assert "Account     n/a USDC equity" in text
+        components = {c.name: c for c in registry.snapshot().components}
+        metrics = components["missing_values"].metrics
+        assert metrics["collapsed_equity"] == 1
+    finally:
+        bind_missing_value_counter(None)
 
 
 def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:

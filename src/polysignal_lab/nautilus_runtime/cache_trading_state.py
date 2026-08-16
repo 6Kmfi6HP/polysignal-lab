@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+import math
 from typing import cast
 
 from polysignal_lab.alpha.types import (
@@ -96,7 +97,7 @@ def _order_view(
         position_id=tags.get("position_id"),
         status=status,
         price=_number(getattr(order, "price", None)),
-        filled_quantity=_number(getattr(order, "filled_qty", None)) or 0.0,
+        filled_quantity=_required_number(order, "filled_qty"),
         average_fill_price=_number(getattr(order, "avg_px", None)),
         ts_event=(
             _timestamp(getattr(order, "ts_accepted", None))
@@ -112,6 +113,11 @@ def _order_view(
     )
 
 
+# Issue #77 per-site judgments: order.filled_qty=0 is a legal "unfilled"
+# state; position.signed_qty=0 is an existing close/FLAT transient filtered
+# below; position.avg_px_open=0 is impossible (Polymarket price domain (0,1))
+# and treated as missing. Missing/non-finite values on the main trading-state
+# path raise instead of fabricating a zero.
 def _position_view(
     position: object,
     *,
@@ -145,9 +151,9 @@ def _position_view(
     )
     tags = _tags(getattr(candidates[0], "tags", ())) if candidates else {}
     strategy = tags.get("strategy", "")
-    quantity = abs(_number(getattr(position, "signed_qty", None)) or 0.0)
-    avg_entry_price = _number(getattr(position, "avg_px_open", None)) or 0.0
-    if not position_id or not strategy or quantity <= 0.0 or avg_entry_price <= 0.0:
+    quantity = abs(_required_number(position, "signed_qty"))
+    avg_entry_price = _required_number(position, "avg_px_open", positive=True)
+    if not position_id or not strategy or quantity <= 0.0:
         return None
     return CachedPositionView(
         position_id=position_id,
@@ -229,6 +235,15 @@ def _number(value: object) -> float | None:
         return float(str(candidate))
     except ValueError:
         return None
+
+
+def _required_number(source: object, name: str, *, positive: bool = False) -> float:
+    """Main-path required number: zero is preserved unless ``positive``."""
+    value = _number(getattr(source, name, None))
+    if value is None or not math.isfinite(value) or (positive and value <= 0.0):
+        prefix = "positive " if positive else ""
+        raise ValueError(f"missing {prefix}{name}; refusing fabricated trading state")
+    return value
 
 
 def _boolean(source: object, name: str) -> bool:

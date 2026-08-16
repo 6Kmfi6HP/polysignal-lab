@@ -6,6 +6,8 @@ from inspect import Parameter, signature
 import math
 from typing import SupportsFloat, cast
 
+from polysignal_lab.domain import missing_values
+
 
 def project_order_event(
     event: object,
@@ -58,7 +60,9 @@ def project_fill_event(
     if metrics is not None:
         merged_metrics.update(dict(metrics))
     tags = _tags(getattr(event, "tags", None))
-    signal_id = tags.get("signal_id", str(merged_metrics.get("signal_id") or ""))
+    signal_id = tags.get("signal_id") or missing_values.identifier(
+        merged_metrics, {}, "signal_id", source="project_fill_event"
+    )
     quantity = _float_attr(event, "last_qty")
     if quantity == 0.0:
         quantity = _float_attr(event, "shares") or _float_attr(event, "quantity")
