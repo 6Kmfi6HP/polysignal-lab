@@ -213,6 +213,7 @@ def _write_fleet_heartbeat(
     phase: str,
     replay_unconfirmed: bool,
     replay_started_at: datetime | None = None,
+    updated_at: datetime = T0,
 ) -> None:
     detail: dict[str, object] = {
         "subscription_state": phase,
@@ -221,12 +222,13 @@ def _write_fleet_heartbeat(
     if replay_started_at is not None:
         detail["adapter_replay_started_at"] = replay_started_at.isoformat()
     payload = {
-        "updated_at": T0.isoformat(),
+        "updated_at": updated_at.isoformat(),
         "phase": "readiness_miss",
         "fatal": False,
         "fatal_reason": None,
-        "last_data_at": T0.isoformat(),
+        "last_data_at": updated_at.isoformat(),
         # No armed readiness-miss: the fleet-restart path is the one under test.
+        # Data stays fresh here; starvation is exercised in test_data_starvation_liveness.py.
         "readiness_miss_started_at_by_key": {},
         "readiness_detail_by_key": {"cond-1": detail},
     }
@@ -261,6 +263,7 @@ def test_fleet_never_ready_defers_restart_while_replay_within_grace(
             phase="stale_orderbook",
             replay_unconfirmed=True,
             replay_started_at=replay_started,
+            updated_at=observed_at,
         )
         _ = watchdog.poll_once()
 
@@ -275,6 +278,7 @@ def test_fleet_never_ready_defers_restart_while_replay_within_grace(
         phase="stale_orderbook",
         replay_unconfirmed=True,
         replay_started_at=replay_started,
+        updated_at=first_expired,
     )
     _ = watchdog.poll_once()
     assert restarts == []
@@ -286,6 +290,7 @@ def test_fleet_never_ready_defers_restart_while_replay_within_grace(
         phase="stale_orderbook",
         replay_unconfirmed=True,
         replay_started_at=replay_started,
+        updated_at=late,
     )
     _ = watchdog.poll_once()
 
@@ -308,7 +313,10 @@ def test_fleet_never_ready_restarts_when_replay_marker_has_no_anchor(
     for observed_at in (T0, T0 + timedelta(seconds=301)):
         clock["now"] = observed_at
         _write_fleet_heartbeat(
-            tmp_path, phase="stale_orderbook", replay_unconfirmed=True
+            tmp_path,
+            phase="stale_orderbook",
+            replay_unconfirmed=True,
+            updated_at=observed_at,
         )
         _ = watchdog.poll_once()
 
@@ -330,7 +338,10 @@ def test_fleet_never_ready_still_requests_restart_without_replay_unconfirmed(
     for observed_at in (T0, T0 + timedelta(seconds=301)):
         clock["now"] = observed_at
         _write_fleet_heartbeat(
-            tmp_path, phase="stale_orderbook", replay_unconfirmed=False
+            tmp_path,
+            phase="stale_orderbook",
+            replay_unconfirmed=False,
+            updated_at=observed_at,
         )
         _ = watchdog.poll_once()
 
@@ -402,11 +413,11 @@ def test_fleet_rotating_grace_does_not_escape_supervision(tmp_path: Path) -> Non
 
     def write_fleet() -> None:
         payload = {
-            "updated_at": T0.isoformat(),
+            "updated_at": clock["now"].isoformat(),
             "phase": "readiness_miss",
             "fatal": False,
             "fatal_reason": None,
-            "last_data_at": T0.isoformat(),
+            "last_data_at": clock["now"].isoformat(),
             "readiness_miss_started_at_by_key": {},
             "readiness_detail_by_key": {
                 # c1 is still inside its 240s grace; c2's grace expired long ago.
