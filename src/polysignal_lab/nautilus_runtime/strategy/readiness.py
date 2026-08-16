@@ -338,6 +338,19 @@ def subscription_timing_detail(
     }
 
 
+def _adapter_replay_detail(
+    state: MarketSubscriptionState,
+    condition_id: str,
+) -> dict[str, object]:
+    return {
+        "adapter_replay_unconfirmed": condition_id
+        in state.adapter_replay_started_at_by_condition,
+        "adapter_replay_started_at": state.adapter_replay_started_at_by_condition.get(
+            condition_id
+        ),
+    }
+
+
 def readiness_detail(
     strategy: _ReadinessStrategy,
     condition_id: str,
@@ -382,6 +395,7 @@ def readiness_detail(
         "last_book_received_at_by_side": last_receipts,
         "freshness_ms_by_side": freshness_by_side,
         "max_freshness_ms": max_freshness_ms,
+        **_adapter_replay_detail(state, condition_id),
     }
 
 

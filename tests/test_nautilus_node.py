@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,12 @@ from polysignal_lab.nautilus_runtime.node_builder import (
 )
 from polysignal_lab.nautilus_runtime.node_lifecycle import (
     _run_node_async,
+    _stop_node_async,
     _strategy_names_from_bundle,
+)
+from polysignal_lab.nautilus_runtime.os_signals import (
+    _reset_process_stop_request,
+    request_process_stop,
 )
 from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     validate_native_runtime_settings,
@@ -469,6 +475,84 @@ async def test_sync_live_node_run_is_offloaded_from_event_loop(
     await _run_node_async(Node())
 
     assert calls == ["thread", "run"]
+
+
+def test_supervised_restart_callback_never_calls_node_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    raised: list[str] = []
+    callbacks: list[Callable[[str], None]] = []
+
+    class Watchdog:
+        def set_restart_callback(self, callback: Callable[[str], None]) -> None:
+            callbacks.append(callback)
+
+    watchdog = Watchdog()
+    bundle = SimpleNamespace(observability=SimpleNamespace(liveness_watchdog=watchdog))
+    node = SimpleNamespace(stop=lambda: calls.append("stop"))
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.request_process_stop",
+        lambda: raised.append("signal"),
+    )
+
+    from polysignal_lab.nautilus_runtime.node import _bind_supervised_restart
+
+    _bind_supervised_restart(cast(Any, bundle), node)
+    assert len(callbacks) == 1
+    errors: list[str] = []
+
+    def invoke() -> None:
+        try:
+            callbacks[0]("fleet_never_ready")
+        except Exception as exc:  # pragma: no cover - test failure channel
+            errors.append(str(exc))
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    thread.join(timeout=2.0)
+
+    assert errors == []
+    assert calls == []
+    assert raised == ["signal"]
+
+
+def test_request_process_stop_is_idempotent_within_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raised: list[str] = []
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._raise_stop_signal",
+        lambda: raised.append("stop"),
+    )
+    _reset_process_stop_request()
+    assert request_process_stop() is True
+    assert request_process_stop() is False
+    assert raised == ["stop"]
+    _reset_process_stop_request()
+
+
+@pytest.mark.anyio
+async def test_stop_pyo3_livenode_does_not_cross_thread_call_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    signals: list[str] = []
+
+    class LiveNode:
+        __module__ = "nautilus_trader.core.nautilus_pyo3.live"
+
+    node = LiveNode()
+    setattr(node, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals.request_process_stop",
+        lambda: signals.append("signal"),
+    )
+
+    await _stop_node_async(node)
+
+    assert calls == []
+    assert signals == ["signal"]
 
 
 @pytest.mark.anyio

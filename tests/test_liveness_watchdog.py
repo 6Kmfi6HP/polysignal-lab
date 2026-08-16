@@ -207,6 +207,68 @@ def test_fleet_never_ready_requests_one_supervised_restart(tmp_path: Path) -> No
     assert restarts == ["fleet_never_ready"]
 
 
+def _write_fleet_heartbeat(tmp_path: Path, *, phase: str, replay_unconfirmed: bool) -> None:
+    payload = {
+        "updated_at": T0.isoformat(),
+        "phase": "readiness_miss",
+        "fatal": False,
+        "fatal_reason": None,
+        "last_data_at": T0.isoformat(),
+        "readiness_miss_started_at_by_key": {"cond-1": T0.isoformat()},
+        "readiness_detail_by_key": {
+            "cond-1": {
+                "subscription_state": phase,
+                "adapter_replay_unconfirmed": replay_unconfirmed,
+            }
+        },
+    }
+    (tmp_path / "runtime_heartbeat.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def test_fleet_never_ready_skips_replay_unconfirmed(tmp_path: Path) -> None:
+    restarts: list[str] = []
+    clock = {"now": T0}
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: clock["now"],
+        restart=restarts.append,
+    )
+
+    for observed_at in (T0, T0 + timedelta(seconds=301)):
+        clock["now"] = observed_at
+        _write_fleet_heartbeat(
+            tmp_path, phase="stale_orderbook", replay_unconfirmed=True
+        )
+        _ = watchdog.poll_once()
+
+    assert restarts == []
+
+
+def test_fleet_never_ready_still_requests_restart_without_replay_unconfirmed(
+    tmp_path: Path,
+) -> None:
+    restarts: list[str] = []
+    clock = {"now": T0}
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: clock["now"],
+        restart=restarts.append,
+    )
+
+    for observed_at in (T0, T0 + timedelta(seconds=301)):
+        clock["now"] = observed_at
+        _write_fleet_heartbeat(
+            tmp_path, phase="stale_orderbook", replay_unconfirmed=False
+        )
+        _ = watchdog.poll_once()
+
+    assert restarts == ["fleet_never_ready"]
+
+
 def test_readiness_miss_requests_one_supervised_restart(tmp_path: Path) -> None:
     restarts: list[str] = []
     _write_heartbeat(

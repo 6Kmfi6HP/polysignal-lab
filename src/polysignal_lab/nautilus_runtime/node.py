@@ -37,7 +37,9 @@ from polysignal_lab.nautilus_runtime.node_lifecycle import (
 )
 from polysignal_lab.nautilus_runtime.os_signals import (
     _install_sync_os_signal_handlers,
+    _reset_process_stop_request,
     _runtime_intercepts_os_signals,
+    request_process_stop,
 )
 from polysignal_lab.nautilus_runtime.observability import (
     NautilusEventStoreAdapter,
@@ -143,9 +145,7 @@ def _bind_supervised_restart(bundle: NautilusRuntimeBundle, node: object) -> Non
 
     def restart_node(reason: str) -> None:
         logger.error("supervised_node_restart reason=%s", reason)
-        stopper = getattr(node, "stop", None)
-        if callable(stopper):
-            _ = stopper()
+        request_process_stop()
 
     watchdog.set_restart_callback(restart_node)
 
@@ -154,14 +154,11 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     resolved = settings or load_settings()
     configure_runtime_logging(resolved)
     bundle = _prepare_sync_cli_bundle(resolved)
+    _reset_process_stop_request()
     node = bundle.node
 
     def request_stop() -> None:
-        stopper = getattr(node, "stop", None)
-        if callable(stopper):
-            _ = stopper()
-            return
-        raise KeyboardInterrupt
+        request_process_stop()
 
     _bind_supervised_restart(bundle, node)
 

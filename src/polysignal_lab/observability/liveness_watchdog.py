@@ -76,6 +76,15 @@ class LivenessWatchdog:
         all_waiting = bool(details) and all(
             detail.get("subscription_state") in bookless_states for detail in details
         )
+        if all_waiting and any(
+            detail.get("adapter_replay_unconfirmed") is True for detail in details
+        ):
+            logger.info(
+                "fleet_never_ready skipped: adapter replay unconfirmed",
+                extra={"detail_count": len(details)},
+            )
+            self._fleet_never_ready_started_at = None
+            return False
         if not all_waiting:
             self._fleet_never_ready_started_at = None
             return False

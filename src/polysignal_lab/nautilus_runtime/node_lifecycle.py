@@ -64,10 +64,24 @@ async def _run_node_async(node: object) -> None:
         await result
 
 
+def _is_pyo3_livenode(node: object) -> bool:
+    cls = type(node)
+    return cls.__name__ == "LiveNode" and str(getattr(cls, "__module__", "")).startswith(
+        "nautilus_trader"
+    )
+
+
 async def _stop_node_async(node: object) -> None:
     stop_async = getattr(node, "stop_async", None)
     if callable(stop_async):
         result = stop_async()
+    elif _is_pyo3_livenode(node):
+        # PyO3 LiveNode is unsendable. Cross-thread stop() is the panic observed
+        # in Issue #69; the official run() consumes a process signal/owner intent.
+        from polysignal_lab.nautilus_runtime.os_signals import request_process_stop
+
+        request_process_stop()
+        return
     else:
         stop = getattr(node, "stop", None)
         result = await asyncio.to_thread(stop) if callable(stop) else None

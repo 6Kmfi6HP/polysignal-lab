@@ -174,6 +174,14 @@ class MarketSubscriptionState:
     last_book_received_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
+    # Project-side replay boundary: set when a local recovery dependency boundary
+    # is sent after a reconnect/refresh, and cleared only by a valid managed book
+    # receipt for this generation. A true wire ACK is not available, so this is
+    # intentionally an unconfirmed intent marker, never a substitute for the
+    # book receipt that drives READY.
+    adapter_replay_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
 
 
 class _SubscriptionStateOwner(Protocol):
@@ -857,6 +865,7 @@ def begin_market_book_generation(
     awaiting = set((Side.UP, Side.DOWN) if awaiting_sides is None else awaiting_sides)
     state.awaiting_book_sides_by_condition[condition_id] = awaiting
     state.book_generation_started_at_by_condition[condition_id] = observed_utc
+    state.adapter_replay_started_at_by_condition[condition_id] = observed_utc
     # A new generation owns a fresh set of recovery intents. Only begin may
     # raise the validity clock.
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
@@ -926,6 +935,9 @@ def observe_market_book_side(
     started_at = state.book_generation_started_at_by_condition.get(condition_id)
     if started_at is not None and received < started_at:
         return False
+    # Any valid post-generation book frame proves the adapter replay stream is
+    # live again. Other side readiness still depends on its own receipt.
+    _ = state.adapter_replay_started_at_by_condition.pop(condition_id, None)
     _complete_book_recovery_receipt(state, condition_id, side)
     pending.discard(side)
     if pending:
@@ -992,6 +1004,7 @@ def finish_market_book_generation(
     ready_at = max(receipts.values(), default=received_at)
     state.awaiting_book_sides_by_condition.pop(condition_id)
     state.book_generation_started_at_by_condition.pop(condition_id, None)
+    _ = state.adapter_replay_started_at_by_condition.pop(condition_id, None)
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
     _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
     state.book_stalled_started_at_by_condition.pop(condition_id, None)
@@ -1031,6 +1044,10 @@ def retire_market_book_generation(
         None,
     )
     strategy._subscription_state.book_generation_started_at_by_condition.pop(
+        condition_id,
+        None,
+    )
+    _ = strategy._subscription_state.adapter_replay_started_at_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
         condition_id,
         None,
     )
@@ -1329,6 +1346,15 @@ def _mark_global_book_refresh(
     _global_book_recovery_times[_instrument_key(instrument_id)] = now_utc
 
 
+def _mark_replay_unconfirmed(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> None:
+    state.adapter_replay_started_at_by_condition[condition_id] = now.astimezone(UTC)
+
+
 def _dispatch_book_recovery(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -1344,6 +1370,7 @@ def _dispatch_book_recovery(
             if _global_book_refresh_due(strategy, instrument_id, now=now):
                 _refresh_market_instrument(strategy, instrument_id)
                 _mark_global_book_refresh(strategy, instrument_id, now=now)
+                _mark_replay_unconfirmed(state, condition_id, now=now)
                 dispatched.append(instrument_id)
             dispatched_sides.append(side)
             state.pending_book_recovery_sides_by_condition.setdefault(

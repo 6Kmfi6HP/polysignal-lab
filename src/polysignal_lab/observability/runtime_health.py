@@ -33,6 +33,12 @@ def _detail_counts_toward_readiness_miss(
     once_ready = isinstance(ever_at, str) and bool(ever_at)
     if once_ready:
         return True
+    # A local refresh/reconnect replay boundary has been recorded but no valid
+    # post-boundary book frame has arrived yet. Keep it observable, but do not
+    # let the ordinary readiness-miss clock turn a recent replay into a liveness
+    # failure before the book can converge.
+    if detail.get("adapter_replay_unconfirmed") is True:
+        return False
     state = detail.get("subscription_state")
     if state in {"awaiting_first_book", "awaiting_instrument"}:
         return False
