@@ -244,7 +244,9 @@ def build_polymarket_data_client_config(
     polymarket = settings.data.polymarket
     kwargs: dict[str, object] = {
         "instrument_config": instrument_config,
-        "update_instruments_interval_mins": 1,
+        # Issue69: uncached instruments get silent no-op subscribes, so shorten
+        # the provider refresh window to keep the adapter cache near-live.
+        "update_instruments_interval_mins": 0.25,
         # The locked pyo3 constructor does not expose new_market_filter;
         # keep adapter-wide events disabled rather than cache every Polymarket market.
         "subscribe_new_markets": False,

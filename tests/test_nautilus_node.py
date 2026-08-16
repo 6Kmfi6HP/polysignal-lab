@@ -406,7 +406,10 @@ def test_runtime_bundle_exposes_native_reporting_sources_to_context(
     from polysignal_lab.nautilus_runtime import node as node_module
 
     monkeypatch.setattr(
-        node_module, "build_runtime_node", lambda _settings: native_node
+        node_module, "build_runtime_node", lambda _settings, **_kwargs: native_node
+    )
+    monkeypatch.setattr(
+        node_module, "_current_markets_for_build", lambda _settings: ()
     )
     bundle = _build_nautilus_runtime_bundle(
         settings,

@@ -6,6 +6,7 @@ from datetime import timezone
 from typing import cast
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.domain.market import Market as Market
 from polysignal_lab.domain.missing_values import bind_missing_value_counter
 from polysignal_lab.nautilus_runtime.node_builder import (
     NautilusRuntimeBundle,
@@ -111,12 +112,54 @@ async def _prepare_nautilus_runtime_context(
     return context, observability
 
 
+def _current_markets_for_build(settings: Settings) -> tuple[Market, ...]:
+    """Best-effort current market set for node build (adapter cache pre-fill).
+
+    issue69 live evidence: the Polymarket adapter returns OK from a subscribe
+    for an uncached instrument without ever sending a wire subscription, while
+    the engine records it as subscribed and never retries. Passing the current
+    markets into build_runtime_node pre-fills the adapter's instrument cache via
+    load_ids, so first subscriptions actually land on the wire. A page-capped
+    discovery avoids the gamma events pagination that 422s past ~2000 rows, and
+    discovery failure must never block node construction (incremental provider
+    refresh covers the gap later).
+    """
+    try:
+        from polysignal_lab.data.polymarket_market_discovery import (  # pyright: ignore[reportAttributeAccessIssue]
+            MarketDiscovery,
+        )
+
+        rotation = getattr(getattr(getattr(settings, "runtime", None), "nautilus", None), "market_rotation", None)
+        include_next = (
+            getattr(rotation, "include_next_periods", 0) if rotation is not None else 0
+        )
+        discovery = MarketDiscovery(
+            settings.data.polymarket,
+            settings.markets,
+        )
+        return tuple(
+            discovery.discover_sync(
+                include_next_periods=int(include_next),
+                max_event_pages=2,
+            )
+        )
+    except Exception:
+        logger.warning(
+            "runtime market discovery unavailable; node built with empty market set",
+            exc_info=True,
+        )
+        return ()
+
+
 def _build_nautilus_runtime_bundle(
     settings: Settings,
     context: NautilusRuntimeContext,
     observability: ObservabilityService,
 ) -> NautilusRuntimeBundle:
-    node = build_runtime_node(settings)
+    node = build_runtime_node(
+        settings,
+        markets=_current_markets_for_build(settings),
+    )
     context.nautilus_cache = getattr(node, "cache", None)
     context.nautilus_portfolio = getattr(node, "portfolio", None)
     return NautilusRuntimeBundle(

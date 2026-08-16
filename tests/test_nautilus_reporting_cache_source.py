@@ -101,7 +101,11 @@ def test_generate_daily_report_uses_native_equity_from_runtime_bundle(
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.build_runtime_node",
-        lambda _settings: native_node,
+        lambda _settings, **_kwargs: native_node,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._current_markets_for_build",
+        lambda _settings: (),
     )
     context = build_nautilus_runtime_context(settings, base_dir=tmp_path)
 

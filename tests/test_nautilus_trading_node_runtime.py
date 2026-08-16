@@ -263,7 +263,8 @@ def test_build_polymarket_data_client_config_subscribes_to_future_markets(
     assert getattr(polymarket, "auto_load_debounce_ms") == 100
     assert getattr(polymarket, "auto_load_max_retries") == 12
     assert getattr(polymarket, "subscribe_new_markets") is False
-    assert getattr(polymarket, "update_instruments_interval_mins") == 1
+    # issue69: shorter provider refresh keeps the adapter instrument cache near-live.
+    assert getattr(polymarket, "update_instruments_interval_mins") == 0.25
 
 
 def test_build_sandbox_live_node_bounds_cache_config(
