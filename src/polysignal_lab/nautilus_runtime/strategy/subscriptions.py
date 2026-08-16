@@ -78,6 +78,23 @@ _BOOK_GENERATION_ABANDON_SEC = 240.0
 # refresh if no qualifying book receipt arrived.
 _BOOK_RECOVERY_RETRY_SEC = 120.0
 
+# Phase 1 (drain) and Phase 2 (restore) of a real refresh must land in
+# different DataEngine command-queue turns. The engine forwards an unsubscribe
+# only while its book topic has zero subscribers, and the managed-book handler
+# re-registration within the same synchronous turn makes has_subscribers() true
+# forever — an adaptive refresh that drains and restores back-to-back is a wire
+# no-op (issue69 live evidence: 44 dispatches, 0 wire subscribes). Restore is
+# deferred until the drain has aged past this window so the engine tears the
+# old subscription down first, letting the re-subscribe reach Polymarket's WS
+# and re-push the initial book snapshot.
+_BOOK_RECOVERY_RESTORE_DELAY_SEC = 1.0
+
+# How long a no-book abandonment suppresses re-entry from the universe feed.
+# Bounded so a temporary venue outage (minutes-scale) does not turn into a
+# process-lifetime blackout for the affected markets; after the window the
+# condition is retried once and re-abandoned only if the feed is still silent.
+_NO_BOOK_SUPPRESS_SEC = 900.0
+
 logger = logging.getLogger(__name__)
 
 # All strategies in one TradingNode share the underlying Polymarket adapter
@@ -86,6 +103,9 @@ logger = logging.getLogger(__name__)
 _global_book_recovery_times: dict[str, datetime] = {}
 _global_subscription_strategies: dict[int, object] = {}
 _global_quote_subscription_owners: dict[int, object] = {}
+# Phase-1 drained instruments awaiting a delayed Phase-2 restore. Keyed by the
+# instrument key; the stored tuple keeps the nautilus object for the restore.
+_global_book_restore_pending: dict[str, tuple[object, datetime]] = {}
 
 
 def _register_subscription_strategy(strategy: object) -> None:  # pyright: ignore[reportUnusedFunction]
@@ -113,6 +133,7 @@ def _clear_global_book_recovery_state() -> None:  # pyright: ignore[reportUnused
     _global_book_recovery_times.clear()
     _global_subscription_strategies.clear()
     _global_quote_subscription_owners.clear()
+    _global_book_restore_pending.clear()
 
 
 @dataclass(slots=True)
@@ -572,6 +593,8 @@ def _subscribe_market_condition(
     if not condition_in_subscription_scope(strategy, condition_id):
         return
     if not allow_inactive and condition_id not in strategy._active_condition_ids:
+        return
+    if _subscribe_suppressed(strategy, condition_id, now=now):
         return
     state = strategy._subscription_state
     current_phase = state.condition_phases.get(
@@ -1128,11 +1151,58 @@ def _book_generation_stalled(
     )
 
 
+def _no_book_abandoned_at(strategy: object) -> dict[str, datetime]:
+    """Per-condition no-book abandonment timestamps (bounded suppression)."""
+    abandoned = getattr(strategy, "_no_book_abandoned_at_by_condition", None)
+    if abandoned is None:
+        return {}
+    return abandoned  # pyright: ignore[reportReturnType]
+
+
+def _subscribe_suppressed(strategy: object, condition_id: str, *, now: datetime) -> bool:
+    """True when a no-book-abandoned condition is inside its suppression window.
+
+    Bounded by _NO_BOOK_SUPPRESS_SEC so a temporary venue outage recovers on
+    retry, while a genuinely defunct market gets re-abandoned again 240s after
+    re-entry instead of spinning forever.
+    """
+    abandoned = _no_book_abandoned_at(strategy)
+    abandoned_at = abandoned.get(condition_id)
+    if abandoned_at is None:
+        return False
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    if (now_utc - abandoned_at).total_seconds() >= _NO_BOOK_SUPPRESS_SEC:
+        abandoned.pop(condition_id, None)
+        return False
+    return True
+
+
+def _mark_no_book_abandoned(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    instruments: Sequence[object],
+    *,
+    now: datetime,
+) -> None:
+    """Bounded suppression marker + pending-restore purge for an abandoned
+    condition. The universe feed re-adds conditions on every epoch; without the
+    marker an abandoned market would be re-subscribed and re-abandoned every
+    240s (issue69 live evidence: 710 abandon events/day)."""
+    _no_book_abandoned_at(strategy)[condition_id] = (
+        now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    ).astimezone(UTC)
+    for instrument_id in instruments:
+        _global_book_restore_pending.pop(_instrument_key(instrument_id), None)
+
+
 def abandon_book_stalled_condition(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     *,
     stall_sec: float,
+    now: datetime,
 ) -> bool:
     """Drop a condition whose book never materialized despite resubscription.
 
@@ -1153,6 +1223,8 @@ def abandon_book_stalled_condition(
         return False
     instruments = condition_instruments(strategy, condition_id)
     strategy._active_condition_ids.discard(condition_id)
+    # Suppress universe re-entry and drop pending Phase-2 restores.
+    _mark_no_book_abandoned(strategy, condition_id, instruments, now=now)
     for instrument_id in instruments:
         _ = unsubscribe_market_instrument(strategy, instrument_id)
     clear_condition_lifecycle_state(
@@ -1289,12 +1361,20 @@ def _restore_market_subscription_owners(
 def _refresh_market_instrument(
     strategy: _SubscriptionStrategy,
     instrument_id: object,
+    *,
+    now: datetime,
 ) -> None:
-    """Force an official-adapter token reset across all subscription owners.
+    """Phase 1: force an official-adapter token reset across all subscription
+    owners, deferring restore to a later event-loop turn.
 
-    Every quote, trade, and book owner releases the shared token before any
-    restore. Managed books return first so the replacement snapshot cannot
-    arrive before the adapter has recreated book state.
+    Phase 1 releases every quote/trade/book owner of the shared token and
+    registers the instrument for a delayed Phase 2 (see
+    _flush_pending_book_restores). The split is required because a back-to-back
+    same-turn drain+restore is a wire no-op: the DataEngine forwards an
+    unsubscribe only while its book topic has zero subscribers, and the
+    managed-book handler re-registered by the restore within the same turn keeps
+    has_subscribers() true, so Polymarket never sees a subscription it could
+    answer with a fresh initial-book snapshot.
     """
     instrument_id = _nautilus_instrument_id(instrument_id)
     owners = _subscription_owners_for_instrument(strategy, instrument_id)
@@ -1309,14 +1389,61 @@ def _refresh_market_instrument(
     )
     failures: list[Exception] = []
     _drain_market_subscription_owners(owners, quote_owners, instrument_id, failures)
-    _restore_market_subscription_owners(owners, quote_owners, instrument_id, failures)
     if failures:
-        raise RuntimeError(
-            "Official adapter refresh failed for {} in {} subscription operation(s)".format(
-                _instrument_key(instrument_id),
-                len(failures),
+        logger.warning(
+            "book_recovery_drain_failed",
+            extra={
+                "instrument_id": _instrument_key(instrument_id),
+                "failure_count": len(failures),
+            },
+        )
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    _global_book_restore_pending[_instrument_key(instrument_id)] = (
+        instrument_id,
+        now_utc,
+    )
+
+
+def _flush_pending_book_restores(
+    strategy: _SubscriptionStrategy,
+    *,
+    now: datetime,
+) -> tuple[object, ...]:
+    """Phase 2: restore instruments drained by a previous event-loop turn.
+
+    Runs from the evaluation heartbeat so the DataEngine command queue has
+    processed the delayed unsubscribe before the re-subscribe is enqueued. A
+    restore failure is logged and the instrument is left out of the global
+    refresh throttle, so the next recovery round can retry immediately instead
+    of waiting out the 240s gate.
+    """
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    restored: list[object] = []
+    for key, (instrument_id, promised_at) in tuple(_global_book_restore_pending.items()):
+        if (now_utc - promised_at).total_seconds() < _BOOK_RECOVERY_RESTORE_DELAY_SEC:
+            continue
+        _global_book_restore_pending.pop(key, None)
+        instrument_id = _nautilus_instrument_id(instrument_id)
+        owners = _subscription_owners_for_instrument(strategy, instrument_id)
+        quote_owners = _quote_owners_for_instrument(instrument_id)
+        failures: list[Exception] = []
+        _restore_market_subscription_owners(owners, quote_owners, instrument_id, failures)
+        if failures:
+            logger.warning(
+                "book_recovery_restore_failed",
+                extra={
+                    "instrument_id": _instrument_key(instrument_id),
+                    "failure_count": len(failures),
+                },
             )
-        ) from failures[0]
+            continue
+        _mark_global_book_refresh(strategy, instrument_id, now=now)
+        restored.append(instrument_id)
+    return tuple(restored)
 
 
 def _global_book_refresh_due(
@@ -1369,6 +1496,22 @@ def _mark_replay_unconfirmed(
     )
 
 
+def _record_recovery_intent(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    side: Side,
+    *,
+    now: datetime,
+) -> None:
+    """Record the per-side recovery intent and its dispatch timestamp."""
+    state.pending_book_recovery_sides_by_condition.setdefault(condition_id, set()).add(
+        side
+    )
+    state.book_recovery_dispatched_at_by_condition.setdefault(condition_id, {})[
+        side
+    ] = now.astimezone(UTC)
+
+
 def _dispatch_book_recovery(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -1381,20 +1524,19 @@ def _dispatch_book_recovery(
     dispatched_sides: list[Side] = []
     try:
         for side, instrument_id in targets:
-            if _global_book_refresh_due(strategy, instrument_id, now=now):
-                _refresh_market_instrument(strategy, instrument_id)
-                _mark_global_book_refresh(strategy, instrument_id, now=now)
+            key = _instrument_key(instrument_id)
+            # A prior Phase-1 drain awaiting its Phase-2 restore must not be
+            # torn down again on the next heartbeat.
+            if key not in _global_book_restore_pending and _global_book_refresh_due(
+                strategy,
+                instrument_id,
+                now=now,
+            ):
+                _refresh_market_instrument(strategy, instrument_id, now=now)
                 _mark_replay_unconfirmed(state, condition_id, now=now)
                 dispatched.append(instrument_id)
             dispatched_sides.append(side)
-            state.pending_book_recovery_sides_by_condition.setdefault(
-                condition_id,
-                set(),
-            ).add(side)
-            state.book_recovery_dispatched_at_by_condition.setdefault(
-                condition_id,
-                {},
-            )[side] = now.astimezone(UTC)
+            _record_recovery_intent(state, condition_id, side, now=now)
     except Exception:
         logger.exception(
             "book_recovery_batch_failed",
@@ -1492,7 +1634,12 @@ def _abandon_if_total_stall_exceeded(
     stall_sec = (now.astimezone(UTC) - total_stalled_at).total_seconds()
     if stall_sec < _BOOK_GENERATION_ABANDON_SEC:
         return False
-    _ = abandon_book_stalled_condition(strategy, condition_id, stall_sec=stall_sec)
+    _ = abandon_book_stalled_condition(
+        strategy,
+        condition_id,
+        stall_sec=stall_sec,
+        now=now,
+    )
     return True
 
 
@@ -1587,6 +1734,28 @@ def _first_book_recovery_due(
     )
 
 
+def _log_book_refresh_requested(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    instruments: Sequence[object],
+    *,
+    stall_sec: float,
+    dispatched: Sequence[object],
+) -> None:
+    """Gate the trend log on real wire dispatch (issue69 storm throttle)."""
+    log = logger.info if dispatched else logger.debug
+    log(
+        "condition_book_refresh_requested",
+        extra=_recovery_log_extra(
+            state,
+            condition_id,
+            instruments,
+            stall_sec=stall_sec,
+            dispatched=dispatched,
+        ),
+    )
+
+
 def force_resubscribe_if_book_stalled(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -1595,6 +1764,8 @@ def force_resubscribe_if_book_stalled(
 ) -> bool:
     """Submit each missing-side recovery intent once for this generation."""
     state = strategy._subscription_state
+    if _subscribe_suppressed(strategy, condition_id, now=now):
+        return False
     if not _first_book_recovery_due(
         strategy,
         condition_id,
@@ -1613,15 +1784,12 @@ def force_resubscribe_if_book_stalled(
         if generation_started_at is not None
         else _BOOK_GENERATION_STALL_SEC
     )
-    logger.info(
-        "condition_book_refresh_requested",
-        extra=_recovery_log_extra(
-            state,
-            condition_id,
-            instruments,
-            stall_sec=stall_sec,
-            dispatched=dispatched,
-        ),
+    _log_book_refresh_requested(
+        state,
+        condition_id,
+        instruments,
+        stall_sec=stall_sec,
+        dispatched=dispatched,
     )
     return True
 
@@ -1666,6 +1834,8 @@ def force_resubscribe_if_stale_orderbook(
     via the book-stall clock: a global/silent feed outage is reported by
     liveness/data-starvation, not by silently dropping active conditions (W2)."""
     state = strategy._subscription_state
+    if _subscribe_suppressed(strategy, condition_id, now=now):
+        return False
     retry_due = _stale_book_recovery_due(
         strategy,
         condition_id,
@@ -1684,14 +1854,11 @@ def force_resubscribe_if_stale_orderbook(
     instruments, dispatched = attempt
     _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     stall_sec = round((now_utc - total_stalled_at).total_seconds(), 3)
-    logger.info(
-        "condition_book_refresh_requested",
-        extra=_recovery_log_extra(
-            state,
-            condition_id,
-            instruments,
-            stall_sec=stall_sec,
-            dispatched=dispatched,
-        ),
+    _log_book_refresh_requested(
+        state,
+        condition_id,
+        instruments,
+        stall_sec=stall_sec,
+        dispatched=dispatched,
     )
     return True

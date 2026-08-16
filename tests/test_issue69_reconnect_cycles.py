@@ -13,7 +13,9 @@ from polysignal_lab.nautilus_runtime.strategy.readiness import readiness_detail
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     ConditionSubscriptionPhase,
     MarketSubscriptionState,
+    _BOOK_RECOVERY_RESTORE_DELAY_SEC,
     _clear_global_book_recovery_state,
+    _flush_pending_book_restores,
     _mark_replay_unconfirmed,
     begin_market_book_generation,
     condition_phase,
@@ -208,6 +210,12 @@ def test_five_continuous_market_cycles_restore_all_bilateral_books() -> None:
                 assert force_resubscribe_if_stale_orderbook(
                     strategy, condition_id, now=now
                 )
+        # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase
+        # refresh); apply it before asserting the wire-level membership.
+        _flush_pending_book_restores(
+            strategy,
+            now=now + timedelta(seconds=_BOOK_RECOVERY_RESTORE_DELAY_SEC + 1),
+        )
 
         expected = sorted(
             f"{condition_id}-{side.value.lower()}.POLYMARKET"

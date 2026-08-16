@@ -25,8 +25,10 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
     _BOOK_GENERATION_ABANDON_SEC,
     _BOOK_GENERATION_STALL_SEC,
+    _BOOK_RECOVERY_RESTORE_DELAY_SEC,
     _BOOK_RECOVERY_RETRY_SEC,  # pyright: ignore[reportPrivateUsage]
     _clear_global_book_recovery_state,  # pyright: ignore[reportPrivateUsage]
+    _flush_pending_book_restores,  # pyright: ignore[reportPrivateUsage]
     _register_quote_subscription_owner,  # pyright: ignore[reportPrivateUsage]
     _register_subscription_strategy,  # pyright: ignore[reportPrivateUsage]
     abandon_book_stalled_condition,
@@ -93,6 +95,7 @@ class _ResubscribeStrategy:
         self._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
         self._runtime_readiness_reason_by_condition: dict[str, str] = {}
         self._runtime_readiness_miss_condition_ids: set[str] = set()
+        self._no_book_abandoned_at_by_condition: dict[str, datetime] = {}
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
@@ -197,6 +200,14 @@ class _ResubscribeStrategy:
         return object()
 
 
+def _flush_restores(strategy: _ResubscribeStrategy, *, after: datetime) -> None:
+    """Apply the deferred Phase-2 restores (issue69 two-phase refresh)."""
+    _flush_pending_book_restores(
+        strategy,
+        now=after + timedelta(seconds=_BOOK_RECOVERY_RESTORE_DELAY_SEC + 1),
+    )
+
+
 def _stalled_state(
     strategy: _ResubscribeStrategy,
     condition_id: str,
@@ -227,6 +238,8 @@ def test_stalled_condition_refreshes_books_and_generation_state() -> None:
         "btc-5m",
         now=now,
     )
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert triggered is True
     assert sorted(strategy.unsubscribed_instruments) == [
@@ -355,6 +368,8 @@ def test_real_strategy_resubscription_does_not_require_snapshot_wrapper() -> Non
         "btc-5m",
         now=now,
     )
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert triggered is True
     assert sorted(strategy.unsubscribed_instruments) == [
@@ -651,6 +666,8 @@ def test_unavailable_snapshot_request_is_not_called_by_recovery_heartbeat() -> N
     strategy.request_order_book_snapshot = fail_snapshot_request  # type: ignore[method-assign]
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
@@ -692,6 +709,8 @@ def test_partial_book_retry_resubscribes_only_the_missing_side() -> None:
         )
         is True
     )
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now + timedelta(seconds=1))
 
     assert strategy.unsubscribed_instruments == ["btc-5m-down.POLYMARKET"]
     assert strategy.subscribed_instruments == ["btc-5m-down.POLYMARKET"]
@@ -718,6 +737,8 @@ def test_stale_orderbook_retry_resubscribes_only_the_stale_side() -> None:
     total_stalled_at = state.book_stalled_started_at_by_condition["btc-5m"]
 
     assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is True
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert strategy.unsubscribed_instruments == ["btc-5m-down.POLYMARKET"]
     assert strategy.subscribed_instruments == ["btc-5m-down.POLYMARKET"]
@@ -861,6 +882,8 @@ def test_resubscription_is_idempotent_within_stall_window() -> None:
         "btc-5m",
         now=now,
     )
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
     second = force_resubscribe_if_book_stalled(
         strategy,
         "btc-5m",
@@ -923,6 +946,8 @@ def test_force_resubscribe_still_resubscribes_below_abandon_threshold() -> None:
         "btc-5m",
         now=now,
     )
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert triggered is True
     assert "btc-5m" in strategy._active_condition_ids
@@ -946,11 +971,13 @@ def test_abandon_condition_clears_lifecycle_state_and_readiness_miss() -> None:
     strategy._runtime_readiness_miss_condition_ids = {"btc-5m"}
     strategy._runtime_readiness_reason_by_condition["btc-5m"] = "awaiting_first_book"
     strategy._subscription_state.last_book_at_by_condition["btc-5m"] = {}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
 
     abandoned = abandon_book_stalled_condition(
         strategy,
         "btc-5m",
         stall_sec=_BOOK_GENERATION_ABANDON_SEC,
+        now=now,
     )
 
     assert abandoned is True
@@ -968,16 +995,19 @@ def test_abandon_is_idempotent() -> None:
     registry = _registry()
     strategy = _ResubscribeStrategy(registry)
     strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
 
     first = abandon_book_stalled_condition(
         strategy,
         "btc-5m",
         stall_sec=_BOOK_GENERATION_ABANDON_SEC,
+        now=now,
     )
     second = abandon_book_stalled_condition(
         strategy,
         "btc-5m",
         stall_sec=_BOOK_GENERATION_ABANDON_SEC + 10,
+        now=now + timedelta(seconds=30),
     )
 
     assert first is True
@@ -989,11 +1019,13 @@ def test_abandon_is_idempotent() -> None:
 def test_abandon_is_noop_for_condition_not_in_active_set() -> None:
     registry = _registry()
     strategy = _ResubscribeStrategy(registry)
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
 
     abandoned = abandon_book_stalled_condition(
         strategy,
         "btc-5m",
         stall_sec=_BOOK_GENERATION_ABANDON_SEC,
+        now=now,
     )
 
     assert abandoned is False
@@ -1093,6 +1125,8 @@ def test_evaluation_heartbeat_resubscribes_stalled_condition() -> None:
     )
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
@@ -1272,6 +1306,8 @@ def test_stale_orderbook_condition_rebuilds_book_subscription() -> None:
     started_at = state.book_stalled_started_at_by_condition["btc-5m"]
 
     triggered = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert triggered is True
     assert sorted(strategy.unsubscribed_instruments) == [
@@ -1334,6 +1370,8 @@ def test_stale_orderbook_condition_never_abandoned_past_total_stall() -> None:
     )
 
     triggered = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert triggered is True  # repair, not abandon
     assert "btc-5m" in strategy._active_condition_ids
@@ -1369,6 +1407,8 @@ def test_previously_ready_condition_not_abandoned_via_book_stall_path() -> None:
     )
 
     triggered = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert triggered is True  # retried, not abandoned
     assert "btc-5m" in strategy._active_condition_ids
@@ -1449,6 +1489,8 @@ def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
     state = strategy._subscription_state
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
@@ -1528,6 +1570,8 @@ def test_each_strategy_owns_its_book_recovery_intent() -> None:
 
     for strategy in strategies:
         on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategies[0], after=now)
 
     assert len(strategies[0].unsubscribed_instruments) == 2
     assert len(strategies[0].subscribed_instruments) == 2
@@ -1556,6 +1600,8 @@ def test_official_recovery_drains_all_strategy_stream_refs() -> None:
         _register_subscription_strategy(strategy)  # pyright: ignore[reportPrivateUsage]
 
     assert force_resubscribe_if_book_stalled(strategies[0], "btc-5m", now=now) is True
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategies[0], after=now)
 
     # Each owner releases and restores its managed-book membership. The fake
     # keeps quote/trade calls out of the legacy book call counters; production
@@ -1652,6 +1698,8 @@ def test_official_recovery_orders_full_drain_before_book_first_restore() -> None
     )
 
     assert force_resubscribe_if_book_stalled(strategies[0], "btc-5m", now=now) is True
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategies[0], after=now)
 
     for instrument_id in ("btc-5m-up.POLYMARKET", "btc-5m-down.POLYMARKET"):
         instrument_events = [event for event in events if event[3] == instrument_id]
@@ -1759,27 +1807,40 @@ def test_failed_refresh_leaves_only_successful_side_pending_for_retry() -> None:
         started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
     )
 
-    with pytest.raises(RuntimeError, match="Official adapter refresh failed"):
-        _ = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+    triggered = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+    # Phase 1 does not raise on a drain failure (only warns); Phase 2 restores
+    # all targeted instruments on a later turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     state = strategy._subscription_state
+    assert triggered is True
     assert strategy.unsubscribed_instruments == ["btc-5m-up.POLYMARKET"]
     assert strategy.subscribed_instruments == [
         "btc-5m-up.POLYMARKET",
         "btc-5m-down.POLYMARKET",
     ]
-    assert state.pending_book_recovery_sides_by_condition["btc-5m"] == {Side.UP}
+    assert state.pending_book_recovery_sides_by_condition["btc-5m"] == {
+        Side.UP,
+        Side.DOWN,
+    }
 
     strategy.fail_down = False
-    assert force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now) is True
+    retry_at = now + timedelta(
+        seconds=_BOOK_RECOVERY_RETRY_SEC + _BOOK_RECOVERY_RESTORE_DELAY_SEC + 1
+    )
+    assert force_resubscribe_if_book_stalled(strategy, "btc-5m", now=retry_at) is True
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=retry_at)
 
     assert strategy.unsubscribed_instruments == [
+        "btc-5m-up.POLYMARKET",
         "btc-5m-up.POLYMARKET",
         "btc-5m-down.POLYMARKET",
     ]
     assert strategy.subscribed_instruments == [
         "btc-5m-up.POLYMARKET",
         "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
         "btc-5m-down.POLYMARKET",
     ]
     assert state.pending_book_recovery_sides_by_condition["btc-5m"] == {
@@ -1801,6 +1862,8 @@ def test_pending_recovery_intent_redispatches_after_retry_interval() -> None:
         now - timedelta(minutes=10)
     )
     assert force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now) is True
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(strategy, after=now)
 
     assert (
         force_resubscribe_if_book_stalled(
@@ -1814,9 +1877,15 @@ def test_pending_recovery_intent_redispatches_after_retry_interval() -> None:
         force_resubscribe_if_book_stalled(
             strategy,
             "btc-5m",
-            now=now + timedelta(seconds=_BOOK_RECOVERY_RETRY_SEC),
+            now=now + timedelta(seconds=_BOOK_RECOVERY_RETRY_SEC + _BOOK_RECOVERY_RESTORE_DELAY_SEC + 1),
         )
         is True
+    )
+    # Phase 2 restore happens on a later heartbeat turn (issue69 two-phase refresh).
+    _flush_restores(
+        strategy,
+        after=now
+        + timedelta(seconds=_BOOK_RECOVERY_RETRY_SEC + _BOOK_RECOVERY_RESTORE_DELAY_SEC + 1),
     )
     assert len(strategy.unsubscribed_instruments) == 4
     assert len(strategy.subscribed_instruments) == 4

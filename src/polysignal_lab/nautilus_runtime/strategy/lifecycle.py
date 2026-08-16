@@ -21,6 +21,7 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    _flush_pending_book_restores,  # pyright: ignore[reportPrivateUsage]
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
     observe_market_book_side,
@@ -345,6 +346,11 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
         "evaluation_heartbeat",
         active_condition_ids=active_condition_ids,
     )
+    # Phase 2 of any deferred refresh: restore drains from a prior turn so the
+    # DataEngine had a chance to tear down the old wire subscription before the
+    # re-subscribe is enqueued (issue69: same-turn drain+restore is a wire
+    # no-op; splitting the turns makes Polymarket re-push the initial snapshot).
+    _flush_pending_book_restores(strategy, now=now)  # pyright: ignore[reportArgumentType]
     strategy._subscribe_market_conditions(active_condition_ids)
     _reconcile_awaiting_books_from_cache(strategy, active_condition_ids, now=now)
     _recover_book_subscriptions(strategy, active_condition_ids, now=now)

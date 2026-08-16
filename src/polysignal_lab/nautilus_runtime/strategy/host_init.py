@@ -248,6 +248,7 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._runtime_readiness_reason_by_condition = {}
     strategy._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
     strategy._untradable_quote_sides_by_condition = {}
+    strategy._no_book_abandoned_at_by_condition = {}
 
 
 def _bind_pipeline(
