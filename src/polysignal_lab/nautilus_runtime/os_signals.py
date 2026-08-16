@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import threading
+import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 
@@ -16,6 +18,11 @@ _stop_requested = threading.Event()
 # from its own SIGINT handler (intercept_os_signals) while a watchdog thread
 # holds the lock; a plain Lock would deadlock on that re-entry.
 _stop_lock = threading.RLock()
+
+# Grace period between the SIGINT stop intent and the SIGKILL fallback. A
+# healthy process exits in a second or two; only a wedged owner thread
+# survives this long, so the timer only ever fires in the stuck case.
+_HARD_STOP_DELAY_SEC = 20.0
 
 
 def _reset_process_stop_request() -> None:
@@ -40,11 +47,35 @@ def request_process_stop() -> bool:
             return False
         _stop_requested.set()
     _raise_stop_signal()
+    _arm_hard_stop_fallback()
     return True
 
 
 def _raise_stop_signal() -> None:
     signal.raise_signal(signal.SIGINT)
+
+
+def _arm_hard_stop_fallback() -> None:
+    """Escape hatch when the owner thread never returns to the interpreter.
+
+    PyO3's run() consumes the SIGINT stop intent only while the owner thread
+    re-enters Python to run the pending handler. When the WS layer spins on
+    reconnects with no data arriving at all, that re-entry never happens, the
+    intent stays pending forever and the supervised restart silently fails —
+    the container is stuck unhealthy. SIGKILL after a bounded delay is then
+    the only deterministic path; a healthy process exits well before the
+    timer expires. Daemon so it cannot outlive the process it kills.
+    """
+    def _escalate() -> None:
+        time.sleep(_HARD_STOP_DELAY_SEC)
+        with suppress(Exception):
+            os.kill(os.getpid(), signal.SIGKILL)
+
+    _ = threading.Thread(
+        target=_escalate,
+        name="process-stop-escalator",
+        daemon=True,
+    ).start()
 
 
 def _runtime_intercepts_os_signals(settings: object | None) -> bool:

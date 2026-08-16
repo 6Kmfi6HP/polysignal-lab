@@ -550,10 +550,48 @@ def test_request_process_stop_is_idempotent_within_run(
         "polysignal_lab.nautilus_runtime.os_signals._raise_stop_signal",
         lambda: raised.append("stop"),
     )
+    # The fallback timer would SIGKILL the pytest process 20s later.
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._arm_hard_stop_fallback",
+        lambda: None,
+    )
     _reset_process_stop_request()
     assert request_process_stop() is True
     assert request_process_stop() is False
     assert raised == ["stop"]
+    _reset_process_stop_request()
+
+
+def test_request_process_stop_hard_stop_fallback_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wedged owner thread never re-enters Python, so the SIGINT intent
+    stays pending forever and the supervised restart silently fails. The
+    fallback must SIGKILL the process after a bounded delay; a healthy
+    process exits before the timer ever fires."""
+    import os
+    import signal
+    import time
+
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._raise_stop_signal",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._HARD_STOP_DELAY_SEC",
+        0.05,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals.os.kill",
+        lambda pid, sig: kills.append((pid, sig)),
+    )
+    _reset_process_stop_request()
+    request_process_stop()
+    deadline = time.monotonic() + 5.0
+    while not kills and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert kills == [(os.getpid(), signal.SIGKILL)]
     _reset_process_stop_request()
 
 
