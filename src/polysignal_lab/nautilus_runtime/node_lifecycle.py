@@ -58,6 +58,14 @@ async def _run_node_async(node: object) -> None:
         if inspect.isawaitable(result):
             await result
         return
+    if _is_pyo3_livenode(node):
+        raise RuntimeError(
+            "PyO3 LiveNode cannot run via run_nautilus_cli_async: run() is "
+            "blocking and must execute on the thread that constructed the node, "
+            "but async orchestration offloads it to a worker thread (the pyo3 "
+            "unsendable panic in issue #69). Use the synchronous "
+            "run_nautilus_cli entry point to run live Nautilus."
+        )
     run = getattr(node, "run")
     result = await asyncio.to_thread(run)
     if inspect.isawaitable(result):

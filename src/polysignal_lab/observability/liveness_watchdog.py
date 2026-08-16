@@ -13,6 +13,7 @@ from polysignal_lab.observability.liveness_alert import (
     evaluate_liveness_alert,
 )
 from polysignal_lab.observability.runtime_health import (
+    _replay_grace_active,
     _utc_now,
     evaluate_liveness,
     read_runtime_heartbeat,
@@ -76,11 +77,12 @@ class LivenessWatchdog:
         all_waiting = bool(details) and all(
             detail.get("subscription_state") in bookless_states for detail in details
         )
-        if all_waiting and any(
-            detail.get("adapter_replay_unconfirmed") is True for detail in details
+        if all_waiting and all(
+            _replay_grace_active(detail, observed_at=now) for detail in details
         ):
             logger.info(
-                "fleet_never_ready skipped: adapter replay unconfirmed",
+                "fleet_never_ready skipped: every bookless condition within "
+                "its own bounded replay grace",
                 extra={"detail_count": len(details)},
             )
             self._fleet_never_ready_started_at = None

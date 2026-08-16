@@ -14,6 +14,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     ConditionSubscriptionPhase,
     MarketSubscriptionState,
     _clear_global_book_recovery_state,
+    _mark_replay_unconfirmed,
     begin_market_book_generation,
     condition_phase,
     force_resubscribe_if_book_stalled,
@@ -232,3 +233,42 @@ def test_five_continuous_market_cycles_restore_all_bilateral_books() -> None:
                 "UP": received_at.isoformat(),
                 "DOWN": received_at.isoformat(),
             }
+
+
+def test_single_side_book_keeps_replay_marker_until_bilateral() -> None:
+    """B2/partial-replay: one recovering side must not clear the replay marker.
+
+    If a single-side receipt popped the marker, the next refresh dispatch would
+    re-anchor a fresh grace timestamp and a one-sided stall (the other side
+    never recovering) would renew the bounded window forever.
+    """
+    _clear_global_book_recovery_state()
+    condition_id = _condition_id("BTC")
+    strategy = FakeAdapter(_registry(("BTC",)))
+    strategy._active_condition_ids = {condition_id}
+    start = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    begin_market_book_generation(strategy, condition_id, now=start)
+    marker = strategy._subscription_state.adapter_replay_started_at_by_condition
+    assert marker[condition_id] == start
+
+    # Only the UP side recovers; DOWN never arrives.
+    received_at = start + timedelta(seconds=60)
+    assert (
+        observe_market_book_side(
+            strategy,
+            condition_id,
+            Side.UP,
+            received_at=received_at,
+            book_at=received_at,
+        )
+        is False
+    )
+    # Marker stays anchored at the streak start (bounded grace), not re-anchored.
+    assert marker[condition_id] == start
+    assert strategy._subscription_state.awaiting_book_sides_by_condition[
+        condition_id
+    ] == {Side.DOWN}
+
+    # A later refresh dispatch must not move the anchor either.
+    _mark_replay_unconfirmed(strategy._subscription_state, condition_id, now=start + timedelta(minutes=10))
+    assert marker[condition_id] == start

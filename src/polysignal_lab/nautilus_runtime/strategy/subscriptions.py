@@ -865,7 +865,13 @@ def begin_market_book_generation(
     awaiting = set((Side.UP, Side.DOWN) if awaiting_sides is None else awaiting_sides)
     state.awaiting_book_sides_by_condition[condition_id] = awaiting
     state.book_generation_started_at_by_condition[condition_id] = observed_utc
-    state.adapter_replay_started_at_by_condition[condition_id] = observed_utc
+    # The replay boundary anchors the FIRST unconfirmed start of this streak:
+    # setdefault (not overwrite) keeps retries and rotations from renewing the
+    # bounded grace window forever (issue #69 B2).
+    state.adapter_replay_started_at_by_condition.setdefault(
+        condition_id,
+        observed_utc,
+    )
     # A new generation owns a fresh set of recovery intents. Only begin may
     # raise the validity clock.
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
@@ -935,9 +941,11 @@ def observe_market_book_side(
     started_at = state.book_generation_started_at_by_condition.get(condition_id)
     if started_at is not None and received < started_at:
         return False
-    # Any valid post-generation book frame proves the adapter replay stream is
-    # live again. Other side readiness still depends on its own receipt.
-    _ = state.adapter_replay_started_at_by_condition.pop(condition_id, None)
+    # Keep the replay boundary set until the generation confirms bilaterally.
+    # Popping on a single-side receipt would let the next refresh dispatch
+    # re-anchor a fresh grace timestamp, and a one-sided stall (the other side
+    # never recovering) would renew the bounded grace forever (issue #69 B2).
+    # finish_market_book_generation / retire clear the marker.
     _complete_book_recovery_receipt(state, condition_id, side)
     pending.discard(side)
     if pending:
@@ -1352,7 +1360,13 @@ def _mark_replay_unconfirmed(
     *,
     now: datetime,
 ) -> None:
-    state.adapter_replay_started_at_by_condition[condition_id] = now.astimezone(UTC)
+    observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    # Anchor the first unconfirmed start; a later refresh dispatch while still
+    # unconfirmed must not move the timestamp (bounded grace in issue #69 B2).
+    state.adapter_replay_started_at_by_condition.setdefault(
+        condition_id,
+        observed.astimezone(UTC),
+    )
 
 
 def _dispatch_book_recovery(

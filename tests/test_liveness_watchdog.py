@@ -207,27 +207,95 @@ def test_fleet_never_ready_requests_one_supervised_restart(tmp_path: Path) -> No
     assert restarts == ["fleet_never_ready"]
 
 
-def _write_fleet_heartbeat(tmp_path: Path, *, phase: str, replay_unconfirmed: bool) -> None:
+def _write_fleet_heartbeat(
+    tmp_path: Path,
+    *,
+    phase: str,
+    replay_unconfirmed: bool,
+    replay_started_at: datetime | None = None,
+) -> None:
+    detail: dict[str, object] = {
+        "subscription_state": phase,
+        "adapter_replay_unconfirmed": replay_unconfirmed,
+    }
+    if replay_started_at is not None:
+        detail["adapter_replay_started_at"] = replay_started_at.isoformat()
     payload = {
         "updated_at": T0.isoformat(),
         "phase": "readiness_miss",
         "fatal": False,
         "fatal_reason": None,
         "last_data_at": T0.isoformat(),
-        "readiness_miss_started_at_by_key": {"cond-1": T0.isoformat()},
-        "readiness_detail_by_key": {
-            "cond-1": {
-                "subscription_state": phase,
-                "adapter_replay_unconfirmed": replay_unconfirmed,
-            }
-        },
+        # No armed readiness-miss: the fleet-restart path is the one under test.
+        "readiness_miss_started_at_by_key": {},
+        "readiness_detail_by_key": {"cond-1": detail},
     }
     (tmp_path / "runtime_heartbeat.json").write_text(
         json.dumps(payload), encoding="utf-8"
     )
 
 
-def test_fleet_never_ready_skips_replay_unconfirmed(tmp_path: Path) -> None:
+def test_fleet_never_ready_defers_restart_while_replay_within_grace(
+    tmp_path: Path,
+) -> None:
+    """A recent adapter replay defers the fleet restart, but only for a bounded
+    window: while the marker is inside the grace period the fleet clock stays
+    reset, and once it ages past the grace period the supervised restart fires
+    after the gate threshold."""
+    restarts: list[str] = []
+    clock = {"now": T0}
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: clock["now"],
+        restart=restarts.append,
+    )
+
+    replay_started = T0 - timedelta(seconds=60)  # inside the 240s grace
+    # Two polls inside the grace window: the fleet clock is reset each time, so
+    # even a long bookless spell does not accumulate a supervised restart.
+    for observed_at in (T0, T0 + timedelta(seconds=100)):
+        clock["now"] = observed_at
+        _write_fleet_heartbeat(
+            tmp_path,
+            phase="stale_orderbook",
+            replay_unconfirmed=True,
+            replay_started_at=replay_started,
+        )
+        _ = watchdog.poll_once()
+
+    assert restarts == []
+
+    # Past the grace window (marker fixed at T0-60s, grace expires at T0+180)
+    # the fleet clock starts accruing; after the gate threshold it restarts.
+    first_expired = T0 + timedelta(seconds=250)
+    clock["now"] = first_expired
+    _write_fleet_heartbeat(
+        tmp_path,
+        phase="stale_orderbook",
+        replay_unconfirmed=True,
+        replay_started_at=replay_started,
+    )
+    _ = watchdog.poll_once()
+    assert restarts == []
+
+    late = T0 + timedelta(seconds=551)
+    clock["now"] = late
+    _write_fleet_heartbeat(
+        tmp_path,
+        phase="stale_orderbook",
+        replay_unconfirmed=True,
+        replay_started_at=replay_started,
+    )
+    _ = watchdog.poll_once()
+
+    assert restarts == ["fleet_never_ready"]
+
+
+def test_fleet_never_ready_restarts_when_replay_marker_has_no_anchor(
+    tmp_path: Path,
+) -> None:
+    """A replay marker without a usable timestamp grants no exemption (B2)."""
     restarts: list[str] = []
     clock = {"now": T0}
     watchdog = LivenessWatchdog(
@@ -244,7 +312,7 @@ def test_fleet_never_ready_skips_replay_unconfirmed(tmp_path: Path) -> None:
         )
         _ = watchdog.poll_once()
 
-    assert restarts == []
+    assert restarts == ["fleet_never_ready"]
 
 
 def test_fleet_never_ready_still_requests_restart_without_replay_unconfirmed(
@@ -317,3 +385,61 @@ def test_disabled_alerting_never_starts_a_thread(tmp_path: Path) -> None:
         assert watchdog._thread is None
     finally:
         watchdog.stop()
+
+
+def test_fleet_rotating_grace_does_not_escape_supervision(tmp_path: Path) -> None:
+    """A fleet cannot defer the supervised restart by keeping ANY one condition
+    inside its grace window: the skip requires every bookless condition to be
+    within its own bounded window. One expired marker resumes the fleet clock."""
+    restarts: list[str] = []
+    clock = {"now": T0}
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: clock["now"],
+        restart=restarts.append,
+    )
+
+    def write_fleet() -> None:
+        payload = {
+            "updated_at": T0.isoformat(),
+            "phase": "readiness_miss",
+            "fatal": False,
+            "fatal_reason": None,
+            "last_data_at": T0.isoformat(),
+            "readiness_miss_started_at_by_key": {},
+            "readiness_detail_by_key": {
+                # c1 is still inside its 240s grace; c2's grace expired long ago.
+                "c1": {
+                    "subscription_state": "stale_orderbook",
+                    "adapter_replay_unconfirmed": True,
+                    "adapter_replay_started_at": (
+                        T0 - timedelta(seconds=60)
+                    ).isoformat(),
+                },
+                "c2": {
+                    "subscription_state": "stale_orderbook",
+                    "adapter_replay_unconfirmed": True,
+                    "adapter_replay_started_at": (
+                        T0 - timedelta(seconds=400)
+                    ).isoformat(),
+                },
+            },
+        }
+        (tmp_path / "runtime_heartbeat.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    # At T0 c1 is in-grace but c2 is not: the all-in-grace skip does NOT fire,
+    # so the fleet clock starts accruing from the first poll.
+    clock["now"] = T0
+    write_fleet()
+    _ = watchdog.poll_once()
+    assert restarts == []
+
+    # Past the gate threshold the fleet restart fires despite c1 still being
+    # (hypothetically) within its own grace: one expired condition is enough.
+    clock["now"] = T0 + timedelta(seconds=301)
+    write_fleet()
+    _ = watchdog.poll_once()
+    assert restarts == ["fleet_never_ready"]

@@ -342,11 +342,15 @@ def _adapter_replay_detail(
     state: MarketSubscriptionState,
     condition_id: str,
 ) -> dict[str, object]:
+    started_at = state.adapter_replay_started_at_by_condition.get(condition_id)
     return {
-        "adapter_replay_unconfirmed": condition_id
-        in state.adapter_replay_started_at_by_condition,
-        "adapter_replay_started_at": state.adapter_replay_started_at_by_condition.get(
-            condition_id
+        "adapter_replay_unconfirmed": started_at is not None,
+        # Must be an ISO string like every other timestamp in the detail: the
+        # detail is serialized to the runtime heartbeat JSON, and a raw
+        # datetime breaks json.dumps on exactly the recovery window this field
+        # exists to observe (issue #69 B1).
+        "adapter_replay_started_at": (
+            None if started_at is None else started_at.isoformat()
         ),
     }
 

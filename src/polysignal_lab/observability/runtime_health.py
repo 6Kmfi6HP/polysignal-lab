@@ -12,13 +12,56 @@ from polysignal_lab.observability.health import HealthSnapshot
 
 _GLOBAL_READINESS_KEY = "__global__"
 
+# Bounded window a fresh adapter replay/recovery boundary gets to deliver its
+# first book before the ordinary readiness-miss clock (and fleet restart) may
+# arm. Mirrors the strategy-side _BOOK_GENERATION_ABANDON_SEC scale: long enough
+# for a legitimate reconnect replay to converge, short enough that a genuinely
+# stuck condition is still supervised. The anchor is the FIRST unconfirmed
+# replay start and is never extended by retries (issue #69 B2).
+REPLAY_GRACE_SEC: float = 240.0
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _parse_replay_started_at(value: object) -> datetime | None:
+    """Parse the replay anchor from the detail, tolerating str and datetime."""
+    if isinstance(value, datetime):
+        zoned = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+        return zoned.astimezone(UTC)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).astimezone(UTC)
+        except ValueError:
+            return None
+    return None
+
+
+def _replay_grace_active(
+    detail: dict[str, object] | None,
+    *,
+    observed_at: datetime,
+) -> bool:
+    """True while a replay boundary is recent enough to defer the liveness clock."""
+    if detail is None or detail.get("adapter_replay_unconfirmed") is not True:
+        return False
+    started_at = _parse_replay_started_at(detail.get("adapter_replay_started_at"))
+    if started_at is None:
+        # Marker present but no usable anchor: fail closed so a corrupt or
+        # legacy replay marker cannot grant an unbounded exemption.
+        return False
+    observed = (
+        observed_at if observed_at.tzinfo is not None else observed_at.replace(tzinfo=UTC)
+    ).astimezone(UTC)
+    elapsed = max(0.0, (observed - started_at).total_seconds())
+    return elapsed <= REPLAY_GRACE_SEC
+
+
 def _detail_counts_toward_readiness_miss(
     detail: dict[str, object] | None,
+    *,
+    observed_at: datetime,
 ) -> bool:
     """Once-READY misses arm the 300s liveness clock; never-READY do not.
 
@@ -26,19 +69,20 @@ def _detail_counts_toward_readiness_miss(
     visible in readiness detail for observation, but must not make Docker
     liveness unhealthy while global ``last_data_at`` is still advancing.
     Missing or legacy detail fails closed.
+
+    A replay boundary recorded within the bounded grace window defers the clock
+    whether or not the condition was ever READY, so a once-READY condition that
+    re-waits after a reconnect is not restarted during the recovery window, and
+    a never-READY fleet cannot stay exempt forever.
     """
     if detail is None:
         return True
+    if _replay_grace_active(detail, observed_at=observed_at):
+        return False
     ever_at = detail.get("first_bilateral_book_ever_at")
     once_ready = isinstance(ever_at, str) and bool(ever_at)
     if once_ready:
         return True
-    # A local refresh/reconnect replay boundary has been recorded but no valid
-    # post-boundary book frame has arrived yet. Keep it observable, but do not
-    # let the ordinary readiness-miss clock turn a recent replay into a liveness
-    # failure before the book can converge.
-    if detail.get("adapter_replay_unconfirmed") is True:
-        return False
     state = detail.get("subscription_state")
     if state in {"awaiting_first_book", "awaiting_instrument"}:
         return False
@@ -159,7 +203,10 @@ def write_runtime_heartbeat(
                 if readiness_detail is None
                 else readiness_detail
             )
-            if _detail_counts_toward_readiness_miss(detail_for_clock):
+            if _detail_counts_toward_readiness_miss(
+                detail_for_clock,
+                observed_at=(now or _utc_now()),
+            ):
                 _ = readiness_misses.setdefault(readiness_key, timestamp)
             else:
                 _ = readiness_misses.pop(readiness_key, None)
@@ -378,7 +425,10 @@ def evaluate_liveness(
         readiness_started_at = tuple(
             datetime.fromisoformat(value).astimezone(UTC)
             for key, value in heartbeat.readiness_miss_started_at_by_key.items()
-            if _detail_counts_toward_readiness_miss(readiness_details.get(key))
+            if _detail_counts_toward_readiness_miss(
+                readiness_details.get(key),
+                observed_at=observed_at,
+            )
         )
     except FileNotFoundError:
         if inside_startup_grace:

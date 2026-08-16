@@ -477,6 +477,31 @@ async def test_sync_live_node_run_is_offloaded_from_event_loop(
     assert calls == ["thread", "run"]
 
 
+@pytest.mark.anyio
+async def test_pyo3_livenode_run_raises_instead_of_cross_thread_panic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3: a PyO3 LiveNode must fail fast, not panic on a worker thread."""
+    calls: list[str] = []
+
+    class LiveNode:
+        __module__ = "nautilus_trader.core.nautilus_pyo3.live"
+
+        def run(self) -> None:
+            calls.append("run")
+
+    async def fake_to_thread(function, *args):
+        calls.append("thread")
+        return function(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    with pytest.raises(RuntimeError, match="PyO3 LiveNode cannot run"):
+        await _run_node_async(LiveNode())
+
+    assert calls == []
+
+
 def test_supervised_restart_callback_never_calls_node_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

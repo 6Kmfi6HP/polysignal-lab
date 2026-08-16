@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from polysignal_lab.config import Settings, StorageConfig
 from polysignal_lab.nautilus_runtime import node_probes
+from polysignal_lab.nautilus_runtime.strategy.readiness import _adapter_replay_detail
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionState,
+)
 
 
 @pytest.fixture()
@@ -175,3 +180,22 @@ def test_readiness_recovery_is_logged(probe_env, caplog) -> None:
         if record.message == "Runtime readiness recovered: condition_id=cond-1"
     )
     assert recovery.readiness_detail["first_bilateral_book_latency_ms"] == 250
+
+
+def test_readiness_callback_serializes_replay_marker(probe_env) -> None:
+    """B1: the exact production write path must not crash on a replay marker.
+
+    ``_write_runtime_heartbeat_best_effort`` catches only ``OSError``, so the
+    old raw-``datetime`` detail escaped as ``TypeError`` and left the heartbeat
+    file unwritten exactly when recovery observability was needed.
+    """
+    _, note_readiness, heartbeat_path, _, _ = probe_env
+    state = MarketSubscriptionState()
+    state.adapter_replay_started_at_by_condition["eth-5m"] = datetime.now(UTC)
+    detail = _adapter_replay_detail(state, "eth-5m")
+    assert isinstance(detail["adapter_replay_unconfirmed"], bool)
+
+    note_readiness("eth-5m", False, dict(detail))
+
+    stored_detail = _read(heartbeat_path)["readiness_detail_by_key"]["eth-5m"]
+    assert isinstance(stored_detail["adapter_replay_started_at"], str)
