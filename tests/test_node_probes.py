@@ -197,5 +197,8 @@ def test_readiness_callback_serializes_replay_marker(probe_env) -> None:
 
     note_readiness("eth-5m", False, dict(detail))
 
-    stored_detail = _read(heartbeat_path)["readiness_detail_by_key"]["eth-5m"]
+    detail_by_key = _read(heartbeat_path)["readiness_detail_by_key"]
+    assert isinstance(detail_by_key, dict)
+    stored_detail = detail_by_key["eth-5m"]
+    assert isinstance(stored_detail, dict)
     assert isinstance(stored_detail["adapter_replay_started_at"], str)

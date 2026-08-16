@@ -34,6 +34,13 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
 T0 = datetime(2026, 8, 16, 6, 0, 0, tzinfo=UTC)
 
 
+class _SubscriptionOwner:
+    """Minimal duck-typed owner satisfying ``_SubscriptionStateOwner``."""
+
+    def __init__(self, state: MarketSubscriptionState) -> None:
+        self._subscription_state = state
+
+
 def _once_ready_detail(
     *, replay_at: datetime | None, state: str = "stale_orderbook"
 ) -> dict[str, object]:
@@ -122,7 +129,7 @@ def test_replay_marker_is_not_extended_by_retries_or_rotations() -> None:
     _clear_global_book_recovery_state()
     state = MarketSubscriptionState()
     begin_market_book_generation(
-        type("O", (), {"_subscription_state": state})(),  # type: ignore[arg-type]
+        _SubscriptionOwner(state),
         "eth-5m",
         now=T0,
     )
@@ -131,7 +138,7 @@ def test_replay_marker_is_not_extended_by_retries_or_rotations() -> None:
     _mark_replay_unconfirmed(state, "eth-5m", now=late)
     assert state.adapter_replay_started_at_by_condition["eth-5m"] == T0
     begin_market_book_generation(
-        type("O", (), {"_subscription_state": state})(),  # type: ignore[arg-type]
+        _SubscriptionOwner(state),
         "eth-5m",
         now=late,
     )
