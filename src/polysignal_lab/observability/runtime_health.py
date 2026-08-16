@@ -446,16 +446,10 @@ def evaluate_liveness(
         )
 
     age = max(0, int((observed_at - updated_at).total_seconds()))
-    if age > int(max_age_sec):
-        if inside_startup_grace:
-            return LivenessResult(
-                ok=True,
-                heartbeat_age_sec=age,
-                readiness_detail_by_key=readiness_details,
-            )
+    stale = age > int(max_age_sec)
+    if stale and inside_startup_grace:
         return LivenessResult(
-            ok=False,
-            reason="heartbeat_stale",
+            ok=True,
             heartbeat_age_sec=age,
             readiness_detail_by_key=readiness_details,
         )
@@ -471,6 +465,18 @@ def evaluate_liveness(
     )
     if starvation is not None:
         return starvation
+
+    if stale:
+        # Evaluate data starvation before failing on staleness: a wedged
+        # heartbeat with no data at all must still be supervised (previously
+        # the stale branch returned first and the supervisor stayed silent —
+        # observed live as a container stuck unhealthy with no restart).
+        return LivenessResult(
+            ok=False,
+            reason="heartbeat_stale",
+            heartbeat_age_sec=age,
+            readiness_detail_by_key=readiness_details,
+        )
 
     if (
         max_readiness_miss_sec is not None

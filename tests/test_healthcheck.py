@@ -44,6 +44,49 @@ def test_liveness_fails_for_stale_heartbeat(tmp_path) -> None:
     assert result.heartbeat_age_sec == 121
 
 
+def test_liveness_reports_starvation_even_when_heartbeat_stale(tmp_path) -> None:
+    """A wedged heartbeat must not mask data stagnation.
+
+    The stale branch used to return before data_starvation was evaluated, so
+    a no-data container with a frozen heartbeat had no supervised restart
+    path at all (observed live: unhealthy with zero conditions and no
+    restart for the whole window). Starvation must win when both hold.
+    """
+    path = tmp_path / "runtime_heartbeat.json"
+    write_runtime_heartbeat(path, phase="running", now=_dt(0))
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=_dt(0),
+        startup_grace_sec=0,
+        max_readiness_miss_sec=300,
+        max_data_starvation_sec=300,
+        now=_dt(360),
+    )
+
+    assert result.ok is False
+    assert result.reason == "data_starvation"
+
+
+def test_liveness_stale_within_data_window_stays_heartbeat_stale(tmp_path) -> None:
+    path = tmp_path / "runtime_heartbeat.json"
+    write_runtime_heartbeat(path, phase="running", now=_dt(0))
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=_dt(0),
+        startup_grace_sec=0,
+        max_readiness_miss_sec=300,
+        max_data_starvation_sec=300,
+        now=_dt(240),
+    )
+
+    assert result.ok is False
+    assert result.reason == "heartbeat_stale"
+
+
 def test_liveness_fails_for_fatal_heartbeat(tmp_path) -> None:
     path = tmp_path / "runtime_heartbeat.json"
     write_runtime_heartbeat(
