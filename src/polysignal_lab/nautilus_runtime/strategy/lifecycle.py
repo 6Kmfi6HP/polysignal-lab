@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 import logging
+import os
 from typing import Protocol
 
 from polysignal_lab.domain.enums import Side
@@ -249,12 +250,6 @@ def _recover_book_subscriptions(
     *,
     now: datetime,
 ) -> None:
-    logger.info(
-        "recover_book_subscriptions_start strategy=%s count=%d conditions=%s",
-        getattr(strategy, "strategy_name", None),
-        len(condition_ids),
-        list(condition_ids)[:5],
-    )
     for condition_id in condition_ids:
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
@@ -387,48 +382,20 @@ def maybe_run_data_driven_recovery(
 _MARKET_DISCOVERY_INTERVAL = timedelta(seconds=30)
 
 
-def _discover_and_subscribe_new_markets(
-    strategy: _LifecycleStrategy,
-    *,
-    now: datetime,
-) -> None:
-    """Self-sufficient market rotation for live runs.
+def _discover_new_conditions(
+    registry: MarketCatalog,
+    assets: frozenset[str],
+    timeframes: frozenset[str],
+) -> list[str]:
+    """Gamma discovery → registry updates → new conditions to subscribe."""
+    from polysignal_lab.config import load_settings
+    from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 
-    nautilus 1.231 actor timers (MarketRotation's expiry timer) do not fire
-    under ``LiveNode.poll()`` (verified live: the rotation actor stays on
-    ``phase=startup`` for the whole run), so expired slots are never rotated out
-    and new windows never enter the active set — the strategy eventually has
-    zero active conditions and goes dark. Discover current markets directly
-    (the same call A2 uses at build time) and subscribe any condition the
-    registry does not know yet, throttled to avoid hammering Gamma.
-    """
-    if not getattr(strategy, "_market_discovery_enabled", False):
-        return
-    last = getattr(strategy, "_last_market_discovery_at", None)
-    if last is not None and now - last < _MARKET_DISCOVERY_INTERVAL:
-        return
-    strategy._last_market_discovery_at = now  # pyright: ignore[reportAttributeAccessIssue]
-    registry = strategy.registry
-    if registry is None:
-        return
-    assets = getattr(strategy, "_subscription_assets", frozenset())
-    timeframes = getattr(strategy, "_subscription_timeframes", frozenset())
-    try:
-        from polysignal_lab.config import load_settings
-        from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
-
-        settings = load_settings()
-        discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
-        markets = discovery.discover_sync(
-            include_next_periods=1,
-            max_event_pages=2,
-        )
-    except Exception:
-        logger.debug(
-            "market discovery unavailable in recovery heartbeat",
-            exc_info=True,
-        )
-        return
+    settings = load_settings()
+    markets = MarketDiscovery(
+        settings.data.polymarket,
+        settings.markets,
+    ).discover_sync(include_next_periods=1, max_event_pages=2)
     new_conditions: list[str] = []
     for market in markets:
         asset = str(getattr(market, "asset", "")).upper()
@@ -442,6 +409,41 @@ def _discover_and_subscribe_new_markets(
         except (ValueError, TypeError):
             continue
         new_conditions.append(market.condition_id)
+    return new_conditions
+
+
+def _discover_and_subscribe_new_markets(
+    strategy: _LifecycleStrategy,
+    *,
+    now: datetime,
+) -> None:
+    """Self-sufficient market rotation for live runs.
+
+    nautilus 1.231 actor timers (MarketRotation's expiry timer) do not fire
+    under ``LiveNode.poll()``, so expired slots are never rotated out and new
+    windows never enter the active set — the strategy eventually has zero
+    active conditions and goes dark. Discover current markets directly and
+    subscribe any condition the registry does not know yet, throttled and
+    gated on the production POLYSIGNAL_MARKET_DISCOVERY opt-in.
+    """
+    if os.environ.get("POLYSIGNAL_MARKET_DISCOVERY") != "1":
+        return
+    if not getattr(strategy, "_market_discovery_enabled", False):
+        return
+    last = getattr(strategy, "_last_market_discovery_at", None)
+    if last is not None and now - last < _MARKET_DISCOVERY_INTERVAL:
+        return
+    strategy._last_market_discovery_at = now  # pyright: ignore[reportAttributeAccessIssue]
+    registry = strategy.registry
+    if registry is None:
+        return
+    assets = getattr(strategy, "_subscription_assets", frozenset())
+    timeframes = getattr(strategy, "_subscription_timeframes", frozenset())
+    try:
+        new_conditions = _discover_new_conditions(registry, assets, timeframes)
+    except Exception:
+        logger.debug("market discovery unavailable", exc_info=True)
+        return
     if new_conditions:
         logger.info(
             "discovered_new_markets count=%d conditions=%s",
@@ -456,13 +458,6 @@ def _discover_and_subscribe_new_markets(
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
-    logger.info(
-        "evaluation_heartbeat_fired",
-        extra={
-            "strategy": getattr(strategy, "strategy_name", None),
-            "active_condition_ids": list(active_condition_ids),
-        },
-    )
     strategy._note_runtime_progress(
         "evaluation_heartbeat",
         active_condition_ids=active_condition_ids,

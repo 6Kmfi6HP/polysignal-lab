@@ -370,13 +370,6 @@ class MarketRotationActor(DataActor):
     def _on_market_expiry_timer(self, _event: object) -> None:
         now = self._framework_now()
         exited_condition_ids = self._retire_expired_markets(now)
-        logger.info(
-            "market_expiry_timer_fired",
-            extra={
-                "active_count": len(self._active_by_condition),
-                "exited_count": len(exited_condition_ids),
-            },
-        )
         if not exited_condition_ids:
             return
         self._epoch += 1
