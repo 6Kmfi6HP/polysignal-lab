@@ -695,10 +695,6 @@ def subscribe_market_instrument(
         return True
     client_id = _client_id_for_instrument(strategy, instrument_id)
     if not instrument_visible_in_cache(strategy, instrument_id):
-        logger.info(
-            "subscribe_instrument_pending_cache instrument=%s",
-            _instrument_key(instrument_id),
-        )
         state.pending_instrument_ids.add(key)
         _refresh_phase_for_instrument(strategy, key)
         return False
