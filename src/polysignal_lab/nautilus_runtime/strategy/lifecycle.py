@@ -339,6 +339,35 @@ def _reconcile_condition_books_from_cache(
             break
 
 
+def maybe_run_data_driven_recovery(
+    strategy: _LifecycleStrategy,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Run the recovery/reconcile heartbeat from data callbacks.
+
+    nautilus 1.231 timer callbacks do not fire under ``LiveNode.run()`` (verified
+    live: the strategy evaluation heartbeat and the MarketRotation expiry timer
+    both stay silent for the whole run), so the 10s heartbeat that normally
+    repairs missing book sides and rotates expired markets never executes.
+    Data callbacks do fire under ``run()``, so drive the same logic from them,
+    throttled to the heartbeat interval.
+    """
+    current = now or framework_now(strategy)
+    if getattr(strategy, "_data_driven_recovery_disabled", False):
+        return
+    # Only drive the heartbeat for strategies that actually started. Unstarted
+    # strategies (e.g. snapshot-backstop probes built with __new__) have no
+    # subscription state yet and must not run the recovery loop.
+    if not getattr(strategy, "_subscriptions_started", False):
+        return
+    last = getattr(strategy, "_last_data_driven_recovery_at", None)
+    if last is not None and current - last < EVALUATION_HEARTBEAT_INTERVAL:
+        return
+    strategy._last_data_driven_recovery_at = current  # pyright: ignore[reportAttributeAccessIssue]
+    on_evaluation_heartbeat(strategy, None)
+
+
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
