@@ -32,10 +32,13 @@ def test_default_policies_match_sqlite_schema_and_retention_windows() -> None:
     }
     assert (policies["signals"].time_column, policies["signals"].hot_days) == (
         "created_at",
-        14,
+        7,
     )
     assert policies["rejected_signals"].time_column == "rejected_at"
+    assert policies["rejected_signals"].hot_days == 7
     assert policies["report_results"].time_column == "closed_at"
+    assert policies["report_results"].hot_days == 7
+    assert policies["report_orders"].hot_days == 7
     assert policies["report_orders"].preserve_statuses == (
         "PARTIAL",
         "PARTIALLY_FILLED",
@@ -44,10 +47,18 @@ def test_default_policies_match_sqlite_schema_and_retention_windows() -> None:
         "SUBMITTED",
     )
     assert policies["report_positions"].preserve_statuses == ("OPEN",)
+    assert policies["report_positions"].hot_days == 7
     assert policies["report_fills"].preserve_statuses == ()
+    assert policies["report_fills"].hot_days == 7
+    assert policies["system_events"].hot_days == 7
+    assert policies["health_snapshot"].hot_days == 7
+    assert policies["nautilus_decision"].hot_days == 7
+    assert policies["nautilus_fill"].hot_days == 7
+    assert policies["telegram_publishes"].hot_days == 7
+    assert policies["telegram_publishes"].time_column == "sent_at"
+    assert policies["telegram_publishes"].hot_days == 7
     assert policies["daily_reports"].hot_days == 365
     assert policies["report_publish_outbox"].hot_days == 90
-    assert policies["telegram_publishes"].time_column == "sent_at"
     assert policies["strategy_status"].keep_latest_only is True
     assert policies["strategy_status"].latest_group_columns == (
         "strategy",

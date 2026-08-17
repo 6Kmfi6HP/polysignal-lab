@@ -18,14 +18,19 @@ class TableRetentionPolicy:
 
 
 def default_policies() -> list[TableRetentionPolicy]:
+    """激进保留策略：热数据仅保留 7 天（2026-08-17 生产库 26.6GB/850 万行清理后定档）。
+
+    大表统一 7 天以控制 SQLite 体积；daily_reports / report_publish_outbox 属业务
+    交付记录，行数极小，保留更长。
+    """
     return [
-        TableRetentionPolicy("signals", "created_at", 14, True),
-        TableRetentionPolicy("rejected_signals", "rejected_at", 14, True),
-        TableRetentionPolicy("report_fills", "source_event_at", 30, True),
+        TableRetentionPolicy("signals", "created_at", 7, True),
+        TableRetentionPolicy("rejected_signals", "rejected_at", 7, True),
+        TableRetentionPolicy("report_fills", "source_event_at", 7, True),
         TableRetentionPolicy(
             "report_orders",
             "source_event_at",
-            30,
+            7,
             True,
             preserve_statuses=(
                 "PARTIAL",
@@ -38,13 +43,13 @@ def default_policies() -> list[TableRetentionPolicy]:
         TableRetentionPolicy(
             "report_positions",
             "source_event_at",
-            30,
+            7,
             True,
             preserve_statuses=("OPEN",),
         ),
-        TableRetentionPolicy("report_results", "closed_at", 30, True),
+        TableRetentionPolicy("report_results", "closed_at", 7, True),
         TableRetentionPolicy("daily_reports", "created_at", 365, True),
-        TableRetentionPolicy("telegram_publishes", "sent_at", 30, True),
+        TableRetentionPolicy("telegram_publishes", "sent_at", 7, True),
         TableRetentionPolicy(
             "strategy_status",
             "created_at",
@@ -53,9 +58,9 @@ def default_policies() -> list[TableRetentionPolicy]:
             keep_latest_only=True,
             latest_group_columns=("strategy", "asset", "timeframe"),
         ),
-        TableRetentionPolicy("system_events", "created_at", 14, True),
+        TableRetentionPolicy("system_events", "created_at", 7, True),
         TableRetentionPolicy("health_snapshot", "created_at", 7, False),
-        TableRetentionPolicy("nautilus_decision", "created_at", 14, False),
-        TableRetentionPolicy("nautilus_fill", "created_at", 14, False),
+        TableRetentionPolicy("nautilus_decision", "created_at", 7, False),
+        TableRetentionPolicy("nautilus_fill", "created_at", 7, False),
         TableRetentionPolicy("report_publish_outbox", "created_at", 90, False),
     ]

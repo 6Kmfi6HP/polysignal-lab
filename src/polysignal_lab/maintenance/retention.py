@@ -53,6 +53,8 @@ def run_maintenance(settings: Settings, *, dry_run: bool = False) -> dict[str, A
                 ),
             )
             summary["sqlite"] = service.run_retention(retention, dry_run=dry_run)
+            if not dry_run:
+                summary["sqlite_shrink"] = _shrink_sqlite(service)
         summary["jsonl_archived"] = logs._compress_and_archive_old_files(
             dry_run=dry_run
         )
@@ -75,3 +77,25 @@ def run_maintenance(settings: Settings, *, dry_run: bool = False) -> dict[str, A
         if service is not None:
             service.close()
     return summary
+
+
+def _shrink_sqlite(service: PersistenceService) -> dict[str, bool]:
+    """Fold WAL back into the main file, then reclaim freelist space.
+
+    历史故障：retention 删除行后只做 PASSIVE checkpoint，freelist 从未回收，
+    生产库膨胀到 26.6GB 而文件不缩。这里在 retention 之后显式
+    checkpoint(TRUNCATE) + VACUUM；主进程活跃写库时 VACUUM 需短暂独占，
+    可能 SQLITE_BUSY——逐项容忍，失败留待下次 maintenance 再补。
+    """
+    result: dict[str, bool] = {}
+    try:
+        service.sqlite.wal_checkpoint("TRUNCATE")
+        result["checkpoint"] = True
+    except Exception:
+        result["checkpoint"] = False
+    try:
+        service.sqlite.vacuum()
+        result["vacuum"] = True
+    except Exception:
+        result["vacuum"] = False
+    return result

@@ -189,6 +189,14 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_report_fills_order ON report_fills(report_order_id,source_event_at)",
     "CREATE INDEX IF NOT EXISTS idx_report_positions_status ON report_positions(status,source_event_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",
+    # Dashboard 全表时间倒序查询（无 WHERE 的 ORDER BY time DESC）加速：
+    "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_rejected_signals_rejected_at ON rejected_signals(rejected_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_report_orders_source_event ON report_orders(source_event_at DESC, source_event_id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_report_positions_source_event ON report_positions(source_event_at DESC, source_event_id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_report_results_closed_at ON report_results(closed_at DESC, report_result_id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_system_events_created_at ON system_events(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_report_fills_source_event ON report_fills(source_event_at, report_fill_id)",
 ]
 
 REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
