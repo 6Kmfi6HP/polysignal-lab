@@ -402,12 +402,15 @@ def _discover_new_conditions(
         timeframe = str(getattr(market, "timeframe", "")).lower()
         if asset not in assets or timeframe not in timeframes:
             continue
-        if registry.by_condition(market.condition_id) is not None:
-            continue
-        try:
-            registry.register(MarketPairMeta.from_market(market))
-        except (ValueError, TypeError):
-            continue
+        if registry.by_condition(market.condition_id) is None:
+            try:
+                registry.register(MarketPairMeta.from_market(market))
+            except (ValueError, TypeError):
+                continue
+        # Collect every in-scope market, not just newly registered ones: the
+        # strategy's startup condition set is empty (registration delegates the
+        # active set to universe events, and the rotation actor's timers do not
+        # fire under poll()), so without this the fleet never subscribes.
         new_conditions.append(market.condition_id)
     return new_conditions
 
@@ -442,14 +445,17 @@ def _discover_and_subscribe_new_markets(
     try:
         new_conditions = _discover_new_conditions(registry, assets, timeframes)
     except Exception:
-        logger.debug("market discovery unavailable", exc_info=True)
+        logger.debug("market discovery failed", exc_info=True)
         return
+    logger.info(
+        "market_discovery_run strategy=%s new=%d conditions=%s assets=%s tfs=%s",
+        getattr(strategy, "strategy_name", None),
+        len(new_conditions),
+        new_conditions[:5],
+        sorted(assets),
+        sorted(timeframes),
+    )
     if new_conditions:
-        logger.info(
-            "discovered_new_markets count=%d conditions=%s",
-            len(new_conditions),
-            new_conditions[:5],
-        )
         strategy._active_condition_ids.update(new_conditions)  # pyright: ignore[reportAttributeAccessIssue]
         strategy._refresh_asset_conditions()  # pyright: ignore[reportAttributeAccessIssue]
         strategy._subscribe_market_conditions(tuple(new_conditions))
@@ -458,10 +464,18 @@ def _discover_and_subscribe_new_markets(
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
+    if not active_condition_ids:
+        logger.info(
+            "evaluation_heartbeat_no_active_conditions",
+            extra={"strategy": getattr(strategy, "strategy_name", None)},
+        )
     strategy._note_runtime_progress(
         "evaluation_heartbeat",
         active_condition_ids=active_condition_ids,
     )
+    # Self-sufficient market rotation first: nautilus 1.231 actor timers do not
+    # fire under poll(), so without this the active set never gains new windows.
+    _discover_and_subscribe_new_markets(strategy, now=now)
     # Phase 2 of any deferred refresh: restore drains from a prior turn so the
     # DataEngine had a chance to tear down the old wire subscription before the
     # re-subscribe is enqueued (issue69: same-turn drain+restore is a wire
@@ -469,7 +483,6 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
     _flush_pending_book_restores(strategy, now=now)  # pyright: ignore[reportArgumentType]
     strategy._subscribe_market_conditions(active_condition_ids)
     _reconcile_awaiting_books_from_cache(strategy, active_condition_ids, now=now)
-    _discover_and_subscribe_new_markets(strategy, now=now)
     _recover_book_subscriptions(strategy, active_condition_ids, now=now)
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(
