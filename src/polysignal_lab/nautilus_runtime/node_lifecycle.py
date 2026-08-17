@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import cast
@@ -180,17 +181,39 @@ def _run_sync_cli_main(
         settings.logging.directory,
         settings.retention.crash_log_max_bytes,
     )
-    run_method = cast(Callable[..., None], getattr(node, "run"))
-    if "raise_exception" in inspect.signature(run_method).parameters:
-        run_method(raise_exception=True)
-    else:
-        run_method()
+    _run_live_node(node, runtime_logger)
     if strategy_names:
         _dump_thread_stacks(_crash_log_path(settings.logging.directory))
         runtime_logger.warning(
             "LiveNode.run returned unexpectedly with %d strategies active",
             len(strategy_names),
         )
+
+
+_NODE_POLL_INTERVAL_SEC = 0.01
+
+
+def _run_live_node(node: object, runtime_logger: logging.Logger) -> None:
+    """Run the LiveNode's event loop via ``start()`` + ``poll()``.
+
+    nautilus 1.231's ``LiveNode.run()`` drives the async tokio loop but never
+    fires synchronous Python clock timers (verified live: the strategy
+    evaluation heartbeat and MarketRotation expiry timer both stay silent for
+    whole runs), which strands DOWN-side book recovery and expired-market
+    rotation. ``poll()`` drives both the async and synchronous paths, so the
+    recovery/reconcile heartbeats fire as designed.
+    """
+    start_method = cast(Callable[..., None], getattr(node, "start"))
+    poll_method = cast(Callable[..., int], getattr(node, "poll"))
+    is_running = cast(Callable[..., bool], getattr(node, "is_running"))
+    start_method()
+    try:
+        while bool(is_running()):
+            _ = poll_method()
+            time.sleep(_NODE_POLL_INTERVAL_SEC)
+    except Exception:
+        runtime_logger.exception("LiveNode poll loop crashed")
+        raise
 
 
 def _finalize_sync_cli_runtime(
