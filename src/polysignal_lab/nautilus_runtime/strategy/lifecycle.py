@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import Protocol
 
@@ -15,7 +15,10 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     polymarket_rtds_crypto_price_data_type,
     polymarket_rtds_crypto_symbols,
 )
-from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import (
+    MarketCatalog,
+    MarketPairMeta,
+)
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_rtds_data_client_id,
 )
@@ -115,6 +118,13 @@ def start_evaluation_heartbeat(strategy: _LifecycleStrategy, callback: object) -
             callback=callback,
         )
         strategy._evaluation_heartbeat_started = True  # pyright: ignore[reportPrivateUsage]
+        logger.info(
+            "evaluation_heartbeat_timer_registered",
+            extra={
+                "strategy": getattr(strategy, "strategy_name", None),
+                "interval_sec": EVALUATION_HEARTBEAT_INTERVAL.total_seconds(),
+            },
+        )
     except (NotImplementedError, RuntimeError):
         if getattr(strategy, "trader_id", None) is not None:
             raise
@@ -239,6 +249,12 @@ def _recover_book_subscriptions(
     *,
     now: datetime,
 ) -> None:
+    logger.info(
+        "recover_book_subscriptions_start strategy=%s count=%d conditions=%s",
+        getattr(strategy, "strategy_name", None),
+        len(condition_ids),
+        list(condition_ids)[:5],
+    )
     for condition_id in condition_ids:
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
@@ -368,9 +384,85 @@ def maybe_run_data_driven_recovery(
     on_evaluation_heartbeat(strategy, None)
 
 
+_MARKET_DISCOVERY_INTERVAL = timedelta(seconds=30)
+
+
+def _discover_and_subscribe_new_markets(
+    strategy: _LifecycleStrategy,
+    *,
+    now: datetime,
+) -> None:
+    """Self-sufficient market rotation for live runs.
+
+    nautilus 1.231 actor timers (MarketRotation's expiry timer) do not fire
+    under ``LiveNode.poll()`` (verified live: the rotation actor stays on
+    ``phase=startup`` for the whole run), so expired slots are never rotated out
+    and new windows never enter the active set — the strategy eventually has
+    zero active conditions and goes dark. Discover current markets directly
+    (the same call A2 uses at build time) and subscribe any condition the
+    registry does not know yet, throttled to avoid hammering Gamma.
+    """
+    if not getattr(strategy, "_market_discovery_enabled", False):
+        return
+    last = getattr(strategy, "_last_market_discovery_at", None)
+    if last is not None and now - last < _MARKET_DISCOVERY_INTERVAL:
+        return
+    strategy._last_market_discovery_at = now  # pyright: ignore[reportAttributeAccessIssue]
+    registry = strategy.registry
+    if registry is None:
+        return
+    assets = getattr(strategy, "_subscription_assets", frozenset())
+    timeframes = getattr(strategy, "_subscription_timeframes", frozenset())
+    try:
+        from polysignal_lab.config import load_settings
+        from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+
+        settings = load_settings()
+        discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
+        markets = discovery.discover_sync(
+            include_next_periods=1,
+            max_event_pages=2,
+        )
+    except Exception:
+        logger.debug(
+            "market discovery unavailable in recovery heartbeat",
+            exc_info=True,
+        )
+        return
+    new_conditions: list[str] = []
+    for market in markets:
+        asset = str(getattr(market, "asset", "")).upper()
+        timeframe = str(getattr(market, "timeframe", "")).lower()
+        if asset not in assets or timeframe not in timeframes:
+            continue
+        if registry.by_condition(market.condition_id) is not None:
+            continue
+        try:
+            registry.register(MarketPairMeta.from_market(market))
+        except (ValueError, TypeError):
+            continue
+        new_conditions.append(market.condition_id)
+    if new_conditions:
+        logger.info(
+            "discovered_new_markets count=%d conditions=%s",
+            len(new_conditions),
+            new_conditions[:5],
+        )
+        strategy._active_condition_ids.update(new_conditions)  # pyright: ignore[reportAttributeAccessIssue]
+        strategy._refresh_asset_conditions()  # pyright: ignore[reportAttributeAccessIssue]
+        strategy._subscribe_market_conditions(tuple(new_conditions))
+
+
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
+    logger.info(
+        "evaluation_heartbeat_fired",
+        extra={
+            "strategy": getattr(strategy, "strategy_name", None),
+            "active_condition_ids": list(active_condition_ids),
+        },
+    )
     strategy._note_runtime_progress(
         "evaluation_heartbeat",
         active_condition_ids=active_condition_ids,
@@ -382,6 +474,7 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
     _flush_pending_book_restores(strategy, now=now)  # pyright: ignore[reportArgumentType]
     strategy._subscribe_market_conditions(active_condition_ids)
     _reconcile_awaiting_books_from_cache(strategy, active_condition_ids, now=now)
+    _discover_and_subscribe_new_markets(strategy, now=now)
     _recover_book_subscriptions(strategy, active_condition_ids, now=now)
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(

@@ -1716,6 +1716,14 @@ def _first_book_recovery_due(
 ) -> bool:
     state = strategy._subscription_state
     if pending_condition_instrument_ids(strategy, condition_id):
+        logger.info(
+            "recovery_due_gate",
+            extra={
+                "condition_id": condition_id,
+                "gate": "pending_instruments",
+                "value": list(pending_condition_instrument_ids(strategy, condition_id))[:3],
+            },
+        )
         return False
     if condition_id not in state.first_bilateral_book_ever_at_by_condition:
         total_stalled_at = _total_stall_started_at(strategy, condition_id)
@@ -1725,13 +1733,33 @@ def _first_book_recovery_due(
             total_stalled_at=total_stalled_at,
             now=now,
         ):
+            logger.info(
+                "recovery_due_gate",
+                extra={"condition_id": condition_id, "gate": "abandoned_total_stall"},
+            )
             return False
     targets = _awaiting_condition_recovery_targets(strategy, condition_id, now=now)
-    return bool(targets) and _book_generation_stalled(
+    stalled = _book_generation_stalled(
         strategy,
         condition_id,
         now=now,
     )
+    logger.info(
+        "recovery_due_gate",
+        extra={
+            "condition_id": condition_id,
+            "gate": "targets_stall",
+            "target_count": len(targets),
+            "stalled": stalled,
+            "awaiting": sorted(
+                side.value
+                for side in state.awaiting_book_sides_by_condition.get(
+                    condition_id, set()
+                )
+            ),
+        },
+    )
+    return bool(targets) and stalled
 
 
 def _log_book_refresh_requested(
@@ -1765,6 +1793,13 @@ def force_resubscribe_if_book_stalled(
     """Submit each missing-side recovery intent once for this generation."""
     state = strategy._subscription_state
     if _subscribe_suppressed(strategy, condition_id, now=now):
+        logger.info(
+            "force_resubscribe_suppressed",
+            extra={
+                "condition_id": condition_id,
+                "strategy": getattr(strategy, "strategy_name", None),
+            },
+        )
         return False
     if not _first_book_recovery_due(
         strategy,
