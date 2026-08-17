@@ -205,10 +205,9 @@ def _run_live_node(node: object, runtime_logger: logging.Logger) -> None:
     """
     start_method = cast(Callable[..., None], getattr(node, "start"))
     poll_method = cast(Callable[..., int], getattr(node, "poll"))
-    is_running = cast(Callable[..., bool], getattr(node, "is_running"))
     start_method()
     try:
-        while bool(is_running()):
+        while bool(getattr(node, "is_running")):
             _ = poll_method()
             time.sleep(_NODE_POLL_INTERVAL_SEC)
     except Exception:
