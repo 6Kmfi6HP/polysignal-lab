@@ -601,10 +601,7 @@ def _subscribe_market_condition(
         condition_id, ConditionSubscriptionPhase.UNSUBSCRIBED
     )
     first_intent = current_phase not in _SUBSCRIBING_PHASES
-    if not first_intent and not pending_condition_instrument_ids(
-        strategy,
-        condition_id,
-    ):
+    if not first_intent and not pending_condition_instrument_ids(strategy, condition_id):
         _recompute_condition_phase(strategy, condition_id)
         return
     instrument_ids = _instrument_ids(registry, (condition_id,))

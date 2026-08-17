@@ -189,8 +189,6 @@ def on_strategy_start(strategy: _LifecycleStrategy, heartbeat_callback: object) 
                 client_id=client_id,
             )
     _subscribe_custom_data(strategy, PolySignalPriceToBeatData)  # type: ignore[arg-type]
-    # Meta/universe still accepted for catalog keys + active-set updates;
-    # Gamma discovery worker is deleted (official InstrumentProvider owns load).
     _subscribe_custom_data(strategy, PolySignalMarketMetaData)  # type: ignore[arg-type]
     _subscribe_custom_data(strategy, PolySignalMarketUniverseData)  # type: ignore[arg-type]
     start_evaluation_heartbeat(strategy, heartbeat_callback)
