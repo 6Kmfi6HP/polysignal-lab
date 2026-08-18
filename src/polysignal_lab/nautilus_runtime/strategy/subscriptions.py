@@ -1117,6 +1117,9 @@ def unsubscribe_market_instrument(
 ) -> bool:
     instrument_id = _nautilus_instrument_id(instrument_id)
     key = _instrument_key(instrument_id)
+    # Purge any orphaned Phase-2 restore entry so a delayed flush cannot
+    # resurrect a wire subscription to an instrument no strategy owns.
+    _global_book_restore_pending.pop(key, None)
     client_id = _client_id_for_instrument(strategy, instrument_id)
     _ = strategy.unsubscribe_quotes(instrument_id, client_id=client_id)
     _ = strategy.unsubscribe_trades(instrument_id, client_id=client_id)

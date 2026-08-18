@@ -225,9 +225,9 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
         ).fetchall()
         assert len(events) == 3
         assert {row["event_id"] for row in events} == {
-            str(submitted.id),
-            str(accepted.id),
-            str(filled.id),
+            str(submitted.event_id),
+            str(accepted.event_id),
+            str(filled.event_id),
         }
 
         row = store._conn.execute(

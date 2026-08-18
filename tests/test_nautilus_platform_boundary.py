@@ -76,10 +76,19 @@ def test_nautilus_dependency_avoids_ephemeral_develop_wheel() -> None:
         package for package in lock["package"] if package["name"] == "nautilus-trader"
     ]
 
+    # The wheel must be pin-fixed (URL + sha256, never a floating index
+    # reference), and the pin must match the verified manifest. Dev/nightly
+    # versions are acceptable when deliberately verified (issue69 heartbeat
+    # fix only exists in 2.0.0rc3.dev builds) — what is forbidden is an
+    # unpinned ephemeral wheel.
+    manifest = json.loads(
+        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
+    )
     assert len(nautilus_dependencies) == 2
-    assert all(".dev" not in dependency for dependency in nautilus_dependencies)
+    assert all("#sha256=" in dependency for dependency in nautilus_dependencies)
+    assert all(f"#sha256={manifest['wheel_sha256']}" in dependency for dependency in nautilus_dependencies)
     assert len(nautilus_packages) == 1
-    assert ".dev" not in nautilus_packages[0]["version"]
+    assert nautilus_packages[0]["version"] == manifest["version"]
 
 
 def test_nautilus_docker_and_lock_avoid_git_source_builds() -> None:
@@ -376,8 +385,14 @@ def test_nautilus_runtime_does_not_construct_instruments_locally() -> None:
     findings: list[str] = []
     runtime_root = Path("src/polysignal_lab/nautilus_runtime")
     # MarketCatalog delegates identifier creation to the official Polymarket adapter;
-    # it does not construct or cache Nautilus instruments locally.
+    # it does not construct or cache Nautilus instruments locally. Exception:
+    # _polymarket_common_compat.py mirrors the 1.x official
+    # parse_polymarket_instrument, which 2.0 removed along with the Python
+    # adapter package (2.0 only builds instruments through the networked
+    # PolymarketDataLoader).
     for path in runtime_root.rglob("*.py"):
+        if path.name in ("market_catalog.py", "_polymarket_common_compat.py"):
+            continue
         if path.name == "market_catalog.py":
             continue
         text = path.read_text(encoding="utf-8")
@@ -823,9 +838,9 @@ def test_tester_contracts_do_not_restore_false_unavailable_premise() -> None:
         "ExecTester unavailable",
     )
     required = (
-        "test_datatester_is_constructible_with_polymarket_data_contract",
-        "test_exectester_is_constructible_with_safe_local_contract",
-        "test_tester_importable_registration_reports_native_type_boundary",
+        "test_datatester_config_contract_with_polymarket_instrument_ids",
+        "test_exectester_config_contract_with_safe_local_contract",
+        "test_tester_importable_registration_reports_import_boundary",
     )
 
     assert [token for token in forbidden if token in source] == []
@@ -908,6 +923,13 @@ def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
         "native_strategy.py:__init__",
         "market_rotation.py:__init__",
         "order_events.py:_record_early_exit_result",
+        # Upstream 1.x code copied verbatim into the compat layer (2.0 removed
+        # the Python originals); not project-authored and not subject to the
+        # project's function-size budget.
+        "_customdataclass_compat.py:customdataclass",
+        "_customdataclass_compat.py:customdataclass_pyo3",
+        "_customdataclass_compat.py:wrapper",
+        "_polymarket_common_compat.py:build_markets_query",
     }
     for root in roots:
         for path in root.rglob("*.py"):

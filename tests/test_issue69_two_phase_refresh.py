@@ -31,10 +31,13 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     _NO_BOOK_SUPPRESS_SEC,
     _clear_global_book_recovery_state,
     _flush_pending_book_restores,
+    _global_book_restore_pending,
     _subscribe_market_condition,
     _subscribe_suppressed,
     abandon_book_stalled_condition,
+    condition_instruments,
     force_resubscribe_if_book_stalled,
+    unsubscribe_market_instrument,
 )
 
 
@@ -234,3 +237,40 @@ def test_suppression_expires_after_bounded_window() -> None:
     late = now + timedelta(seconds=_NO_BOOK_SUPPRESS_SEC + 10)
     assert _subscribe_suppressed(strategy, "btc-5m", now=late) is False
     assert "btc-5m" not in strategy._no_book_abandoned_at_by_condition
+
+
+def test_orphan_restore_pending_purged_on_instrument_unsubscribe() -> None:
+    """A delayed Phase-2 restore must not resurrect an unsubscribed instrument.
+
+    When a condition's instrument is torn down (via unsubscribe_market_instrument)
+    after Phase-1 drained it but before Phase-2 restored it, the orphaned pending
+    entry must be purged so the next flush does not issue a ghost subscribe to a
+    wire token no strategy owns.
+    """
+    _clear_global_book_recovery_state()
+    registry = _registry()
+    strategy = _RefreshStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled(strategy, "btc-5m", now=now - timedelta(seconds=70))
+
+    # Phase 1: drain registers a pending restore for both instruments.
+    assert (
+        force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now) is True
+    )
+    assert len(_global_book_restore_pending) == 2
+
+    # Tear down one instrument directly (e.g. rotation/retire path).
+    up_instrument = condition_instruments(strategy, "btc-5m")[0]
+    up_key = str(getattr(up_instrument, "id", up_instrument))
+    unsubscribe_market_instrument(strategy, up_instrument)
+
+    # The orphaned Phase-2 entry is gone; only the still-subscribed one remains.
+    assert up_key not in _global_book_restore_pending
+
+    # Phase 2: flush restores only surviving pending entries, not the ghost.
+    _flush_pending_book_restores(
+        strategy,
+        now=now + timedelta(seconds=_BOOK_RECOVERY_RESTORE_DELAY_SEC + 1),
+    )
+    assert up_key not in [str(i) for i in strategy.subscribed_instruments]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 from collections.abc import Callable, Mapping
 from typing import cast
 
@@ -312,8 +311,12 @@ def build_polymarket_exec_client_config(settings: Settings) -> object:
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:
-    """Import a config/factory callable. Tests monkeypatch this seam."""
-    module = importlib.import_module(module_name)
+    """Import a config/factory callable. Tests monkeypatch this seam.
+
+    Resolves through ``load_nautilus_module`` so legacy 1.x module paths
+    (``nautilus_trader.core.nautilus_pyo3``) keep working on the 2.0 wheel.
+    """
+    module = load_nautilus_module(module_name)
     return cast(Callable[..., object], getattr(module, attr_name))
 
 

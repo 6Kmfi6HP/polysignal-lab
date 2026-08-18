@@ -194,15 +194,20 @@ _NODE_POLL_INTERVAL_SEC = 0.01
 
 
 def _run_live_node(node: object, runtime_logger: logging.Logger) -> None:
-    """Run the LiveNode's event loop via ``start()`` + ``poll()``.
+    """Run the LiveNode's event loop via ``run()``.
 
-    nautilus 1.231's ``LiveNode.run()`` drives the async tokio loop but never
-    fires synchronous Python clock timers (verified live: the strategy
-    evaluation heartbeat and MarketRotation expiry timer both stay silent for
-    whole runs), which strands DOWN-side book recovery and expired-market
-    rotation. ``poll()`` drives both the async and synchronous paths, so the
-    recovery/reconcile heartbeats fire as designed.
+    1.x shipped a ``start()`` + ``poll()`` pair because its ``run()`` never
+    fired synchronous Python clock timers (stranding recovery/rotation
+    heartbeats). 2.0 removed both: ``run()`` owns the loop on the current
+    thread (msgbus is thread-local), fires the Python clock, and handles
+    SIGINT/SIGTERM gracefully — the same stop-intent contract the watchdog
+    relies on via ``request_process_stop()``. A callable ``run`` therefore
+    supersedes the legacy pair; anything without it (test doubles) falls back.
     """
+    run_method = getattr(node, "run", None)
+    if callable(run_method):
+        run_method()
+        return
     start_method = cast(Callable[..., None], getattr(node, "start"))
     poll_method = cast(Callable[..., int], getattr(node, "poll"))
     start_method()

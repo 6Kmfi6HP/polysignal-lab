@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from polysignal_lab.config import Settings
@@ -21,6 +22,15 @@ from polysignal_lab.observability.runtime_health import (
 )
 
 logger = logging.getLogger("polysignal_lab.observability.liveness_watchdog")
+
+
+def _parse_restart_ts(value: str) -> datetime:
+    """Parse an ISO timestamp from the restart history file."""
+    try:
+        return datetime.fromisoformat(value).astimezone(UTC)
+    except (ValueError, TypeError):
+        # A corrupt entry is ignored rather than crashing the watchdog.
+        return datetime.fromtimestamp(0, tz=UTC)
 
 
 class LivenessWatchdog:
@@ -55,6 +65,53 @@ class LivenessWatchdog:
 
     def _heartbeat_path(self) -> Path:
         return Path(self._settings.storage.state_dir) / "runtime_heartbeat.json"
+
+    def _restart_history_path(self) -> Path:
+        return Path(self._settings.storage.state_dir) / "runtime_restart_history.json"
+
+    def _read_restart_history(self) -> list[datetime]:
+        """Read persisted supervised-restart timestamps (survives container restart)."""
+        try:
+            raw = json.loads(
+                self._restart_history_path().read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return []
+        return [
+            _parse_restart_ts(ts) for ts in raw if isinstance(ts, str)
+        ]
+
+    def _restarts_in_window(
+        self,
+        *,
+        now: datetime,
+    ) -> list[datetime]:
+        """Return persisted restart timestamps inside the rolling breaker window."""
+        window = self._settings.health.restart_gate.restart_circuit_breaker_window_sec
+        cutoff = now - timedelta(seconds=window)
+        return [ts for ts in self._read_restart_history() if ts >= cutoff]
+
+    def _append_restart_timestamp(self, now: datetime) -> None:
+        """Persist a supervised-restart timestamp so the next process sees it."""
+        history = self._read_restart_history()
+        history.append(now)
+        # Prune entries older than the window to keep the file bounded.
+        window = self._settings.health.restart_gate.restart_circuit_breaker_window_sec
+        cutoff = now - timedelta(seconds=window)
+        pruned = [ts for ts in history if ts >= cutoff]
+        try:
+            self._restart_history_path().write_text(
+                json.dumps([ts.isoformat() for ts in pruned]),
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.warning("Failed to persist restart history", exc_info=True)
+
+    def _circuit_breaker_open(self, *, now: datetime) -> bool:
+        """True when too many supervised restarts landed in the rolling window."""
+        max_restarts = self._settings.health.restart_gate.max_restarts_in_window
+        recent = self._restarts_in_window(now=now)
+        return len(recent) >= max_restarts
 
     def _startup_started_at(self) -> datetime | None:
         marker = Path(self._settings.storage.state_dir) / "runtime_startup.json"
@@ -123,6 +180,22 @@ class LivenessWatchdog:
         ):
             reason = "fleet_never_ready"
         if reason is None:
+            return
+        # Circuit breaker: append this restart attempt to the persistent
+        # history first, then check if the rolling window now contains too
+        # many. The append-before-check ordering ensures the current attempt
+        # is counted — otherwise the oldest entry is pruned on append and the
+        # count never reaches the threshold (issue69 death-spiral).
+        observed_now = now or _utc_now()
+        self._append_restart_timestamp(observed_now)
+        if self._circuit_breaker_open(now=observed_now):
+            recent = self._restarts_in_window(now=observed_now)
+            logger.error(
+                "restart_circuit_breaker_open recent_count=%s window_sec=%s",
+                len(recent),
+                self._settings.health.restart_gate.restart_circuit_breaker_window_sec,
+            )
+            self._restart_requested = True
             return
         self._restart_requested = True
         logger.error(

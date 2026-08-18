@@ -166,7 +166,8 @@ def binary_option_outcome_from_gamma(
     token_id: str,
     outcome: str,
 ) -> str:
-    """Outcome label via NT parse_polymarket_instrument — no local dual parse path."""
+    """Outcome label via the 1.x official parse_polymarket_instrument, re-provided
+    project-side in _polymarket_common_compat (2.0 removed the Python adapter)."""
     end_date = _first_text(
         payload, ("end_date_iso", "endDateIso", "endDate", "end_date")
     )

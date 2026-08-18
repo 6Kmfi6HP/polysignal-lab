@@ -1,0 +1,193 @@
+"""Regression tests for the restart circuit breaker (issue69 death-spiral breaker).
+
+Live evidence (2026-08-16/17): Docker ``restart: unless-stopped`` combined with a
+persistent data_starvation or readiness_miss created an infinite restart loop.
+The in-process ``_restart_requested`` latch only prevents multiple restarts within
+a single process lifetime; it has no memory across container restarts, so the
+supervisor kept restarting the same wedged runtime forever.
+
+The fix persists supervised-restart timestamps to ``runtime_restart_history.json``
+in the state directory. Once ``max_restarts_in_window`` restarts land inside the
+rolling ``restart_circuit_breaker_window_sec`` window, the breaker opens: further
+restart requests are suppressed and an error is logged so the operator intervenes
+instead of the container spinning.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+from _pytest.logging import LogCaptureFixture
+
+from polysignal_lab.config import (
+    HealthConfig,
+    HealthRestartGateConfig,
+    Settings,
+    StorageConfig,
+)
+from polysignal_lab.observability.liveness_watchdog import LivenessWatchdog
+
+UTC = timezone.utc
+T0 = datetime(2026, 8, 17, 0, 0, 0, tzinfo=UTC)
+
+# Suppress unused-import: pytest provides the tmp_path/caplog fixtures.
+_ = pytest
+
+
+def _settings(
+    tmp_path: Path,
+    *,
+    max_restarts: int = 3,
+    window_sec: int = 600,
+) -> Settings:
+    return Settings(
+        storage=StorageConfig(state_dir=str(tmp_path)),
+        health=HealthConfig(
+            startup_grace_sec=0,
+            restart_gate=HealthRestartGateConfig(
+                enabled=True,
+                critical_down_sec=300,
+                max_restarts_in_window=max_restarts,
+                restart_circuit_breaker_window_sec=window_sec,
+            ),
+        ),
+    )
+
+
+def _write_starved_heartbeat(tmp_path: Path, *, now: datetime) -> None:
+    """Heartbeat where last_data_at is old enough to trigger data_starvation."""
+    payload = {
+        "updated_at": now.isoformat(),
+        "phase": "data_starvation",
+        "fatal": False,
+        "fatal_reason": None,
+        "last_data_at": (now - timedelta(seconds=301)).isoformat(),
+        "readiness_miss_started_at_by_key": {},
+        "readiness_detail_by_key": {},
+    }
+    (tmp_path / "runtime_heartbeat.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def _seed_restart_history(tmp_path: Path, timestamps: list[datetime]) -> None:
+    (tmp_path / "runtime_restart_history.json").write_text(
+        json.dumps([ts.isoformat() for ts in timestamps]),
+        encoding="utf-8",
+    )
+
+
+def test_circuit_breaker_opens_after_max_restarts_in_window(
+    tmp_path: Path, caplog: LogCaptureFixture
+) -> None:
+    """After max_restarts_in_window supervised restarts within the rolling
+    window, the breaker opens and suppresses further restart requests."""
+    restarts: list[str] = []
+    _write_starved_heartbeat(tmp_path, now=T0)
+    # Seed 3 prior restarts within the 600s window — at the limit.
+    _seed_restart_history(
+        tmp_path,
+        [
+            T0 - timedelta(seconds=300),
+            T0 - timedelta(seconds=200),
+            T0 - timedelta(seconds=100),
+        ],
+    )
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path, max_restarts=3, window_sec=600),
+        lambda _message: None,
+        now=lambda: T0,
+        restart=restarts.append,
+    )
+
+    with caplog.at_level(
+        logging.ERROR, logger="polysignal_lab.observability.liveness_watchdog"
+    ):
+        _ = watchdog.poll_once()
+        _ = watchdog.poll_once()
+
+    # The breaker is open: no restart issued.
+    assert restarts == []
+    assert any(
+        "restart_circuit_breaker_open" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_circuit_breaker_closed_when_restarts_below_threshold(
+    tmp_path: Path,
+) -> None:
+    """With fewer restarts than the limit, the breaker stays closed and the
+    supervised restart fires normally."""
+    restarts: list[str] = []
+    _write_starved_heartbeat(tmp_path, now=T0)
+    _seed_restart_history(
+        tmp_path,
+        [T0 - timedelta(seconds=100)],
+    )
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path, max_restarts=3, window_sec=600),
+        lambda _message: None,
+        now=lambda: T0,
+        restart=restarts.append,
+    )
+
+    _ = watchdog.poll_once()
+    _ = watchdog.poll_once()
+
+    assert restarts == ["data_starvation"]
+
+
+def test_circuit_breaker_resets_after_window_expires(tmp_path: Path) -> None:
+    """Old restarts outside the rolling window are pruned; the breaker closes
+    and a new restart can fire."""
+    restarts: list[str] = []
+    _write_starved_heartbeat(tmp_path, now=T0)
+    # 3 restarts, but all older than the 600s window.
+    _seed_restart_history(
+        tmp_path,
+        [
+            T0 - timedelta(seconds=700),
+            T0 - timedelta(seconds=750),
+            T0 - timedelta(seconds=800),
+        ],
+    )
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path, max_restarts=3, window_sec=600),
+        lambda _message: None,
+        now=lambda: T0,
+        restart=restarts.append,
+    )
+
+    _ = watchdog.poll_once()
+    _ = watchdog.poll_once()
+
+    assert restarts == ["data_starvation"]
+
+
+def test_circuit_breaker_persists_restart_timestamp(
+    tmp_path: Path,
+) -> None:
+    """A supervised restart that fires (breaker closed) appends its timestamp
+    to the persisted history so the next process can see it."""
+    restarts: list[str] = []
+    _write_starved_heartbeat(tmp_path, now=T0)
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path, max_restarts=3, window_sec=600),
+        lambda _message: None,
+        now=lambda: T0,
+        restart=restarts.append,
+    )
+
+    _ = watchdog.poll_once()
+    _ = watchdog.poll_once()
+
+    assert restarts == ["data_starvation"]
+    history_path = tmp_path / "runtime_restart_history.json"
+    assert history_path.exists()
+    history = json.loads(history_path.read_text(encoding="utf-8"))
+    assert any(T0.isoformat() in ts for ts in history)
