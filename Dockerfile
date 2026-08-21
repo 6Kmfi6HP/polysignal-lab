@@ -6,6 +6,12 @@ RUN pip install --no-cache-dir hatchling
 COPY pyproject.toml README.md ./
 COPY docs/runtime_verification/nautilus-polysignal-wheel.json /tmp/nautilus-wheel.json
 COPY src/ src/
+# Use a local wheel copy so Docker builds remain reproducible even if the
+# official nightly index rotates old artifacts.
+COPY wheels/*.whl /tmp/
+RUN sed -i \
+    's|https://packages.nautechsystems.io/simple/nautilus-trader/[^"#]*#[^"]*|file:///tmp/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl|' \
+    pyproject.toml
 RUN pip install --ignore-installed --no-cache-dir --only-binary=nautilus-trader --pre \
     --extra-index-url https://packages.nautechsystems.io/simple \
     --prefix=/install '.[dev,nautilus]'
@@ -21,11 +27,11 @@ PY
 # ── Runtime image (Nautilus LiveNode is the default path) ──────
 FROM python:3.12-slim AS nautilus-runtime
 
-LABEL io.polysignal.nautilus.upstream-sha="a930c8afe380025fc0a10c6b2cd6907d6b983e86" \
-      io.polysignal.nautilus.patch-sha="d16b3462a1178a762e65eaada8b49a478e186143" \
+LABEL io.polysignal.nautilus.upstream-sha="2114cf6f761429e0adb5ca9596fcd7b895b16011" \
+      io.polysignal.nautilus.patch-sha="2114cf6f761429e0adb5ca9596fcd7b895b16011" \
       io.polysignal.nautilus.release-tag="nightly" \
-      io.polysignal.nautilus.version="1.231.0a20260802" \
-      io.polysignal.nautilus.wheel-sha256="a5067497f370b4e2b35375bbf237a144a6affabb3f11a96fbe8dbd77f8907a4c"
+      io.polysignal.nautilus.version="2.0.0rc3.dev20260820+17754" \
+      io.polysignal.nautilus.wheel-sha256="0499facf0dc7e83a82e4f7f21f14802d2f249256dfd1424de3122b0443019890"
 
 WORKDIR /app
 

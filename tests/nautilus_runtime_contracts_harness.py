@@ -9,7 +9,10 @@ from nautilus_trader.test_kit.rust.instruments_pyo3 import TestInstrumentProvide
 from nautilus_contract_probe import ContractProbeConfig, ContractProbeStrategy
 
 VENUE_NAME = "BINANCE"
-DEFAULT_QTY = "0.001000"
+# 2.0 backtest risk engine enforces NOTIONAL_BELOW_MINIMUM (min 10 USDT);
+# 0.001 BTC (~0.1 USDT at ~$100k) would be denied. ~1 BTC clears it at any
+# realistic BTC price.
+DEFAULT_QTY = "1.000000"
 
 
 def default_instrument() -> object:
@@ -136,6 +139,46 @@ def wait_until(
             return
         time.sleep(poll)
     raise TimeoutError(f"condition not met within {timeout}s")
+
+
+def run_node(node: object, *, duration: float = 0.5) -> bool:
+    """Start a 2.0 LiveNode on the caller's event loop, run briefly, stop it.
+
+    2.0 removed ``start()`` and requires the node's loop on the current thread
+    (msgbus uses thread-local storage; running from a spawned thread panics in
+    pyo3). ``run_async`` runs on the caller's loop and must be stopped via the
+    node handle. Returns whether the node reported running while active.
+    """
+    import asyncio
+
+    handle = node.handle()
+
+    async def _main() -> bool:
+        run_task = asyncio.create_task(node.run_async())
+        async def _stopper() -> None:
+            await asyncio.sleep(duration)
+            handle.stop()
+
+        stopper = asyncio.create_task(_stopper())
+        # Sample running state while the node is active; require 10 consecutive
+        # True samples so a transient false negative cannot mask a good start.
+        sampled: list[bool] = []
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            sampled.append(bool(node.is_running))
+            if len(sampled) >= 10 and all(sampled[-10:]):
+                break
+        try:
+            await run_task
+        finally:
+            await stopper
+        return bool(sampled) and all(sampled[-10:])
+
+    return asyncio.run(_main())
+
+
+def stop_node(node: object) -> None:
+    node.stop()
 
 
 def order_statuses(cache: object) -> list[tuple[str, str]]:

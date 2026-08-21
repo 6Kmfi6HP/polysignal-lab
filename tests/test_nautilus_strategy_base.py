@@ -4208,16 +4208,27 @@ def test_native_strategy_heartbeat_recovers_missed_instrument_callback() -> None
 
     strategy.on_data(universe)
 
-    # Cache empty → pending intent only; provider owns instrument loading.
+    # Cache empty → wire request still dispatched so the data client's
+    # auto_load/resolve_poll can resolve the instrument; the keys stay
+    # pending for provider-loaded instrument reconciliation.
     assert strategy.instrument_requests == []
-    assert strategy.book_subscriptions == []
-    assert strategy.trade_subscriptions == []
-    assert strategy.quote_subscriptions == []
+    assert strategy.book_subscriptions == [
+        ("up-a.POLYMARKET", "POLYMARKET-5M"),
+        ("down-a.POLYMARKET", "POLYMARKET-5M"),
+    ]
+    assert strategy.trade_subscriptions == [
+        ("up-a.POLYMARKET", "POLYMARKET-5M"),
+        ("down-a.POLYMARKET", "POLYMARKET-5M"),
+    ]
+    assert strategy.quote_subscriptions == [
+        ("up-a.POLYMARKET", "POLYMARKET-5M"),
+        ("down-a.POLYMARKET", "POLYMARKET-5M"),
+    ]
     assert "condition-a" in strategy._subscription_state.condition_phases
     assert "up-a.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
     assert "down-a.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
     detail = strategy._readiness_detail("condition-a", now=strategy.now)
-    assert detail["subscription_state"] == "awaiting_instrument"
+    assert detail["subscription_state"] == "awaiting_first_book"
     assert detail["pending_instrument_ids"] == [
         "down-a.POLYMARKET",
         "up-a.POLYMARKET",
@@ -4228,8 +4239,10 @@ def test_native_strategy_heartbeat_recovers_missed_instrument_callback() -> None
 
     strategy._on_evaluation_heartbeat(object())
 
+    # Wire request already dispatched by the first subscribe call; the engine
+    # side is live, so readiness follows the book feed rather than the cache.
     assert strategy._runtime_readiness_reason_by_condition["condition-a"] == (
-        "awaiting_instrument"
+        "awaiting_first_book"
     )
 
     # One provider callback arrives normally; the second is missed after Cache insert
@@ -5892,6 +5905,67 @@ def test_native_strategy_notifies_core_before_fill_handler() -> None:
 
 
 # ── L1 subscription selection tests ──────────────────────────────────────────
+
+
+def test_native_strategy_subscribes_uncached_instrument_wire_request() -> None:
+    """issue69: after a window rotation the provider never re-loads new-slot
+    instruments, so gating the subscribe on Cache visibility left the
+    condition PENDING_METADATA forever and every rotation ended in a
+    watchdog data-starvation restart. The adapter's auto_load/resolve_poll
+    only runs when the wire request actually reaches the data client.
+    """
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            # instrument() raises: instrument not in Cache (post-rotation).
+            self._cache_override = SimpleNamespace(
+                instrument=lambda instrument_id: (_ for _ in ()).throw(
+                    LookupError("not found")
+                )
+            )
+            self.subscribed_quotes: list[str] = []
+            self.subscribed_trades: list[str] = []
+            self.subscribed_deltas: list[str] = []
+
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscribed_quotes.append(str(instrument_id))
+
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscribed_trades.append(str(instrument_id))
+
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscribed_deltas.append(str(instrument_id))
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        book_type="L2_MBP",
+        **_native_projections(),
+    )
+
+    strategy._subscribe_market_instrument("up-token.POLYMARKET")
+
+    # Wire request still dispatched so the adapter can auto-load the
+    # instrument; the key stays pending for on_instrument_available.
+    assert strategy.subscribed_quotes == ["up-token.POLYMARKET"]
+    assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
+    assert strategy.subscribed_deltas == ["up-token.POLYMARKET"]
+    assert "up-token.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
 
 
 def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> None:

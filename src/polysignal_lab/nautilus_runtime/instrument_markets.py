@@ -155,13 +155,8 @@ def _payload_from_nautilus_instrument(
 ) -> dict[str, object]:
     """Map official Nautilus BinaryOption → Gamma-shaped Market payload.
 
-    Official Rust adapter instrument.info contains only:
-    token_id, condition_id, market_id, question_id, market_slug, neg_risk,
-    fee_schedule, game_id. It does not set active/closed/end_date_iso.
-
-    The adapter only publishes non-expired instruments via cache_instrument_if_active,
-    so a delivered instrument without explicit closed flags is treated as active.
-    Expiration comes from BinaryOption.expiration_ns (official instrument model).
+    Rust adapter info omits active/closed/end_date_iso; a delivered
+    instrument is non-expired (active) and expiry comes from expiration_ns.
     """
     slug = str(info.get("market_slug") or "")
     condition_id = info.get("condition_id")
@@ -183,7 +178,7 @@ def _payload_from_nautilus_instrument(
         active = True
         closed = False
         archived = False
-    return {
+    payload: dict[str, object] = {
         "id": market_id,
         "conditionId": condition_id,
         "questionID": info.get("question_id"),
@@ -196,6 +191,38 @@ def _payload_from_nautilus_instrument(
         "closed": closed,
         "archived": archived,
     }
+    # Authoritative tick from the instrument's own increment: every downstream
+    # Gamma-shaped projection re-derives the SAME price precision (issue69).
+    payload.update(_tick_items(instrument))
+    return payload
+
+
+def _tick_items(instrument: object) -> dict[str, str]:
+    """Canonical minimum-tick keys for a projected payload.
+
+    Empty when the instrument exposes no price increment (no metadata to
+    propagate); consumers must then keep their documented fallback.
+    """
+    tick_text = _increment_text(getattr(instrument, "price_increment", None))
+    if tick_text is None:
+        return {}
+    return {
+        "minimum_tick_size": tick_text,
+        "minimumTickSize": tick_text,
+        "orderPriceMinTickSize": tick_text,
+    }
+
+
+def _increment_text(value: object) -> str | None:
+    """Canonical decimal text of a Nautilus Price increment, if available."""
+    if value in (None, ""):
+        return None
+    formatted = getattr(value, "to_formatted_str", None)
+    rendered = formatted() if callable(formatted) else str(value)
+    if rendered is None:
+        return None
+    text = str(rendered)
+    return text or None
 
 
 def _datetime_text(value: object) -> str | None:

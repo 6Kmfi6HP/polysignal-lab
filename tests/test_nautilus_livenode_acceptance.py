@@ -16,6 +16,8 @@ from polysignal_lab.nautilus_runtime.live_node import (
 )
 from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
 
+from nautilus_runtime_contracts_harness import run_node
+
 
 @dataclass(frozen=True, slots=True)
 class _AcceptanceProbeConfig:
@@ -103,9 +105,7 @@ def test_livenode_registers_unique_strategy_ids_and_factories() -> None:
     for config in configs:
         node.add_builtin_strategy("EmaCross", config)
 
-    node.start()
-    assert node.is_running is True
-    node.stop()
+    assert run_node(node) is True
 
 
 def test_livenode_save_load_flags_round_trip_on_builder() -> None:
@@ -118,8 +118,7 @@ def test_livenode_save_load_flags_round_trip_on_builder() -> None:
     )
     node = builder.build()
     assert node.trader_id == pyo3.TraderId("STATE-001")
-    node.start()
-    node.stop()
+    run_node(node)
 
 
 def test_livenode_registers_pyo3_strategy_without_registration_globals() -> None:
@@ -143,6 +142,4 @@ def test_livenode_registers_pyo3_strategy_without_registration_globals() -> None
         )
     )
 
-    node.start()
-    assert node.is_running is True
-    node.stop()
+    assert run_node(node) is True

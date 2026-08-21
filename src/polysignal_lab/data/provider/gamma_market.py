@@ -7,6 +7,9 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from polysignal_lab.domain.enums import MarketStatus, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.nautilus_runtime._polymarket_common_compat import (
+    extract_minimum_tick_size,
+)
 from polysignal_lab.utils import parse_dt, safe_float
 
 JsonObject = dict[str, JsonValue]
@@ -166,18 +169,18 @@ def binary_option_outcome_from_gamma(
     token_id: str,
     outcome: str,
 ) -> str:
-    """Outcome label via NT parse_polymarket_instrument — no local dual parse path."""
+    """Outcome label via the 1.x official parse_polymarket_instrument, re-provided
+    project-side in _polymarket_common_compat (2.0 removed the Python adapter)."""
     end_date = _first_text(
         payload, ("end_date_iso", "endDateIso", "endDate", "end_date")
     )
+    # Tick source authority: the official Gamma `orderPriceMinTickSize`
+    # (numeric) from the original payload, then legacy string spellings.
+    # (`_polymarket_common_compat` canonicalizes whatever form is found.)
     market_info: dict[str, object] = {
         "condition_id": condition_id,
         "question": question,
-        "minimum_tick_size": _first_text(
-            payload,
-            ("minimum_tick_size", "minimumTickSize", "tick_size", "tickSize"),
-        )
-        or "0.01",
+        "minimum_tick_size": extract_minimum_tick_size(payload) or "0.01",
         "end_date_iso": end_date or _iso_z(end_ts),
         "_gamma_original": payload,
     }

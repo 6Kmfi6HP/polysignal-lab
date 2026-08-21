@@ -8,6 +8,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     ConditionSubscriptionPhase,
     MarketSubscriptionState,
     _instrument_key,
+    condition_instruments,
     condition_phase,
     pending_condition_instrument_ids,
 )
@@ -50,7 +51,12 @@ def _assert_phase_consistency(strategy: _InvariantStrategy) -> None:
                 f"{condition_id}: PENDING_INSTRUMENT without pending instruments"
             )
         if phase is ConditionSubscriptionPhase.AWAITING_FIRST_BOOK:
-            assert not pending, (
+            unresolved_pending = [
+                key
+                for key in pending
+                if key not in state.subscribed_instrument_ids
+            ]
+            assert not unresolved_pending, (
                 f"{condition_id}: AWAITING_FIRST_BOOK with pending instruments"
             )
             assert (
@@ -177,10 +183,21 @@ def _assert_cleanup_and_ownership(strategy: _InvariantStrategy) -> None:
             f"{condition_id}: lifecycle phase for inactive condition"
         )
 
-    # pending and subscribed never overlap.
-    assert not (state.pending_instrument_ids & state.subscribed_instrument_ids), (
-        "pending and subscribed instrument ids overlap"
-    )
+    # A key may be pending because the wire request was sent before the provider
+    # made it Cache-visible. The active key is marked subscribed once the engine
+    # accepted the request, and on_instrument_available clears pending later;
+    # therefore overlap is legal, but every overlapping key must also be active
+    # in the registry and represented by an active lifecycle phase.
+    overlap = state.pending_instrument_ids & state.subscribed_instrument_ids
+    if overlap:
+        registry_ids = {
+            _instrument_key(iid)
+            for condition_id in strategy._active_condition_ids
+            for iid in condition_instruments(strategy, condition_id)
+        }
+        assert overlap <= registry_ids, (
+            f"pending/subscribed overlap outside active registry: {sorted(overlap)}"
+        )
 
     # Inactive conditions never own active readiness markers.
     for condition_id in strategy._untradable_quote_sides_by_condition:

@@ -12,13 +12,83 @@ from polysignal_lab.observability.health import HealthSnapshot
 
 _GLOBAL_READINESS_KEY = "__global__"
 
+# Bounded window a fresh adapter replay/recovery boundary gets to deliver its
+# first book before the ordinary readiness-miss clock (and fleet restart) may
+# arm. Mirrors the strategy-side _BOOK_GENERATION_ABANDON_SEC scale: long enough
+# for a legitimate reconnect replay to converge, short enough that a genuinely
+# stuck condition is still supervised. The anchor is the FIRST unconfirmed
+# replay start and is never extended by retries (issue #69 B2).
+REPLAY_GRACE_SEC: float = 240.0
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _parse_replay_started_at(value: object) -> datetime | None:
+    """Parse the replay anchor from the detail, tolerating str and datetime."""
+    if isinstance(value, datetime):
+        zoned = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+        return zoned.astimezone(UTC)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).astimezone(UTC)
+        except ValueError:
+            return None
+    return None
+
+
+def _replay_grace_active(
+    detail: dict[str, object] | None,
+    *,
+    observed_at: datetime,
+) -> bool:
+    """True while a replay boundary is recent enough to defer the liveness clock."""
+    if detail is None or detail.get("adapter_replay_unconfirmed") is not True:
+        return False
+    started_at = _parse_replay_started_at(detail.get("adapter_replay_started_at"))
+    if started_at is None:
+        # Marker present but no usable anchor: fail closed so a corrupt or
+        # legacy replay marker cannot grant an unbounded exemption.
+        return False
+    observed = (
+        observed_at
+        if observed_at.tzinfo is not None
+        else observed_at.replace(tzinfo=UTC)
+    ).astimezone(UTC)
+    elapsed = max(0.0, (observed - started_at).total_seconds())
+    return elapsed <= REPLAY_GRACE_SEC
+
+
+def _recovery_attempt_in_progress(detail: dict[str, object]) -> bool:
+    """True when the strategy is actively trying to load a missing book.
+
+    The detail carries both the bounded replay boundary and the current
+    missing-side set. An active recovery must keep the per-condition
+    readiness-miss clock disarmed: the runtime is not a dead
+    active-but-unsubscribed condition, it is visibly driving the next bounded
+    recovery batch. Strictly qualifying on concrete pending work prevents a
+    boolean marker from granting an open-ended exemption.
+    """
+    if detail.get("recovery_in_flight") is True:
+        return True
+    if detail.get("adapter_replay_unconfirmed") is not True:
+        return False
+    missing_sides = detail.get("awaiting_book_sides")
+    pending_instruments = detail.get("pending_instrument_ids")
+    return (
+        isinstance(missing_sides, (list, tuple, set, frozenset))
+        and bool(missing_sides)
+    ) or (
+        isinstance(pending_instruments, (list, tuple, set, frozenset))
+        and bool(pending_instruments)
+    )
+
+
 def _detail_counts_toward_readiness_miss(
     detail: dict[str, object] | None,
+    *,
+    observed_at: datetime,
 ) -> bool:
     """Once-READY misses arm the 300s liveness clock; never-READY do not.
 
@@ -26,15 +96,34 @@ def _detail_counts_toward_readiness_miss(
     visible in readiness detail for observation, but must not make Docker
     liveness unhealthy while global ``last_data_at`` is still advancing.
     Missing or legacy detail fails closed.
+
+    A replay boundary recorded within the bounded grace window defers the clock
+    whether or not the condition was ever READY, so a once-READY condition that
+    re-waits after a reconnect is not restarted during the recovery window, and
+    a never-READY fleet cannot stay exempt forever. An *active* recovery batch
+    (unconfirmed replay marker plus concrete missing sides/instruments) is also
+    exempt: missing order/orderbook data that the runtime is demonstrably
+    working to reload must self-recover, not flap the healthcheck. The
+    process-global ``max_data_starvation_sec`` path is the backstop for a
+    runtime that stops receiving data altogether.
     """
     if detail is None:
         return True
+    if _replay_grace_active(detail, observed_at=observed_at):
+        return False
+    if _recovery_attempt_in_progress(detail):
+        return False
     ever_at = detail.get("first_bilateral_book_ever_at")
     once_ready = isinstance(ever_at, str) and bool(ever_at)
     if once_ready:
         return True
     state = detail.get("subscription_state")
     if state in {"awaiting_first_book", "awaiting_instrument"}:
+        # An explicit replay timeout after recovery attempts is no longer
+        # warmup: the bounded grace window elapsed without a book, so the
+        # condition enters the liveness clock and must be supervised.
+        if detail.get("adapter_replay_timeout") is True:
+            return True
         return False
     return True
 
@@ -52,6 +141,14 @@ class RuntimeHeartbeat:
     last_data_at: str | None = None
     readiness_miss_started_at_by_key: dict[str, str] = field(default_factory=dict)
     readiness_detail_by_key: dict[str, dict[str, object]] = field(default_factory=dict)
+    # Process identity written by the supervised runtime: the OS pid and the
+    # boot generation assigned by the entrypoint supervisor (per app spawn).
+    # The bash supervisor only accepts a heartbeat as "current" when BOTH
+    # fields match the process it started, so a previous boot's persisted
+    # file can never age-kill a fresh process (issue69 stale-heartbeat loop).
+    # None for legacy payloads and writers outside the supervised entrypoint.
+    pid: int | None = None
+    boot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +216,8 @@ def write_runtime_heartbeat(
     readiness_detail: dict[str, object] | None = None,
     active_readiness_keys: frozenset[str] | None = None,
     now: datetime | None = None,
+    pid: int | None = None,
+    boot_id: str | None = None,
 ) -> RuntimeHeartbeat:
     timestamp = (now or _utc_now()).astimezone(UTC).isoformat()
     phase_started_at = timestamp
@@ -153,7 +252,10 @@ def write_runtime_heartbeat(
                 if readiness_detail is None
                 else readiness_detail
             )
-            if _detail_counts_toward_readiness_miss(detail_for_clock):
+            if _detail_counts_toward_readiness_miss(
+                detail_for_clock,
+                observed_at=(now or _utc_now()),
+            ):
                 _ = readiness_misses.setdefault(readiness_key, timestamp)
             else:
                 _ = readiness_misses.pop(readiness_key, None)
@@ -184,6 +286,8 @@ def write_runtime_heartbeat(
         last_data_at=_advance_last_data_at(last_data_at, readiness_detail),
         readiness_miss_started_at_by_key=readiness_misses,
         readiness_detail_by_key=readiness_details,
+        pid=pid,
+        boot_id=boot_id,
     )
     _write_json_atomically(path, asdict(heartbeat))
     return heartbeat
@@ -238,6 +342,13 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     if last_data_at is not None and not isinstance(last_data_at, str):
         raise TypeError("heartbeat last_data_at must be a string or null")
 
+    pid = payload.get("pid")
+    if pid is not None and not isinstance(pid, int):
+        raise TypeError("heartbeat pid must be an int or null")
+    boot_id = payload.get("boot_id")
+    if boot_id is not None and not isinstance(boot_id, str):
+        raise TypeError("heartbeat boot_id must be a string or null")
+
     readiness_raw = payload.get("readiness_miss_started_at_by_key", {})
     if not isinstance(readiness_raw, dict):
         raise TypeError("heartbeat readiness misses must be a JSON object")
@@ -257,11 +368,7 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     # Legacy heartbeats only had phase=readiness_miss. Do not invent a global
     # miss when modern payloads already carry per-condition detail without a
     # once-READY miss clock (never-READY warmup stays observational only).
-    if (
-        not readiness_misses
-        and phase == "readiness_miss"
-        and not readiness_details
-    ):
+    if not readiness_misses and phase == "readiness_miss" and not readiness_details:
         readiness_misses[_GLOBAL_READINESS_KEY] = phase_started_at
 
     return RuntimeHeartbeat(
@@ -273,6 +380,8 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
         last_data_at=last_data_at,
         readiness_miss_started_at_by_key=readiness_misses,
         readiness_detail_by_key=readiness_details,
+        pid=pid,
+        boot_id=boot_id,
     )
 
 
@@ -358,7 +467,19 @@ def evaluate_liveness(
     max_readiness_miss_sec: int | None = None,
     max_data_starvation_sec: int | None = None,
     now: datetime | None = None,
+    current_pid: int | None = None,
 ) -> LivenessResult:
+    """Evaluate process liveness from the heartbeat file.
+
+    ``current_pid`` is the process identity guard used by the in-process
+    watchdog: a heartbeat written by a DIFFERENT process is a previous
+    boot's file (or a shared-volume artifact) and is never evidence against
+    this process. Foreign files report healthy so the current boot's own
+    writer can replace them; the entrypoint supervisor owns the strict
+    pid+boot_id attribution contract. Callers without a process identity
+    (healthcheck CLI, dashboard reader in another process) leave it unset and
+    keep the plain age-based evaluation.
+    """
     observed_at = (now or _utc_now()).astimezone(UTC)
     inside_startup_grace = _inside_startup_grace(
         observed_at,
@@ -367,12 +488,23 @@ def evaluate_liveness(
     )
     try:
         heartbeat = read_runtime_heartbeat(path)
+        if (
+            current_pid is not None
+            and heartbeat.pid is not None
+            and heartbeat.pid != current_pid
+        ):
+            # Old-generation heartbeat: cannot describe THIS process. Never
+            # let another boot's file age-kill a fresh boot.
+            return LivenessResult(ok=True)
         updated_at = datetime.fromisoformat(heartbeat.updated_at).astimezone(UTC)
         readiness_details = dict(heartbeat.readiness_detail_by_key)
         readiness_started_at = tuple(
             datetime.fromisoformat(value).astimezone(UTC)
             for key, value in heartbeat.readiness_miss_started_at_by_key.items()
-            if _detail_counts_toward_readiness_miss(readiness_details.get(key))
+            if _detail_counts_toward_readiness_miss(
+                readiness_details.get(key),
+                observed_at=observed_at,
+            )
         )
     except FileNotFoundError:
         if inside_startup_grace:
@@ -390,16 +522,10 @@ def evaluate_liveness(
         )
 
     age = max(0, int((observed_at - updated_at).total_seconds()))
-    if age > int(max_age_sec):
-        if inside_startup_grace:
-            return LivenessResult(
-                ok=True,
-                heartbeat_age_sec=age,
-                readiness_detail_by_key=readiness_details,
-            )
+    stale = age > int(max_age_sec)
+    if stale and inside_startup_grace:
         return LivenessResult(
-            ok=False,
-            reason="heartbeat_stale",
+            ok=True,
             heartbeat_age_sec=age,
             readiness_detail_by_key=readiness_details,
         )
@@ -415,6 +541,18 @@ def evaluate_liveness(
     )
     if starvation is not None:
         return starvation
+
+    if stale:
+        # Evaluate data starvation before failing on staleness: a wedged
+        # heartbeat with no data at all must still be supervised (previously
+        # the stale branch returned first and the supervisor stayed silent —
+        # observed live as a container stuck unhealthy with no restart).
+        return LivenessResult(
+            ok=False,
+            reason="heartbeat_stale",
+            heartbeat_age_sec=age,
+            readiness_detail_by_key=readiness_details,
+        )
 
     if (
         max_readiness_miss_sec is not None

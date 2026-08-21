@@ -227,8 +227,7 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._startup_condition_ids = strategy.condition_ids
     strategy._active_condition_ids = set(strategy.condition_ids)
     strategy._market_epoch = None
-    strategy._evaluation_heartbeat_started = False
-    strategy._subscriptions_started = False
+    strategy._evaluation_heartbeat_started, strategy._last_data_driven_recovery_at, strategy._subscriptions_started, strategy._market_discovery_enabled = False, None, False, True
     strategy.unsubscribe_exited = host.unsubscribe_exited
     strategy._subscription_state = subs.MarketSubscriptionState()
     subs._register_subscription_strategy(strategy)  # pyright: ignore[reportPrivateUsage, reportAny]
@@ -248,6 +247,7 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._runtime_readiness_reason_by_condition = {}
     strategy._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
     strategy._untradable_quote_sides_by_condition = {}
+    strategy._no_book_abandoned_at_by_condition = {}
 
 
 def _bind_pipeline(

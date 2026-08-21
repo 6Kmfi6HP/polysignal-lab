@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 import time
 from typing import Callable
@@ -32,6 +33,14 @@ def _reset_heartbeat_write_gates() -> None:
 
 def _runtime_heartbeat_path(settings: Settings) -> Path:
     return Path(settings.storage.state_dir) / "runtime_heartbeat.json"
+
+
+def _current_process_boot_id() -> str | None:
+    """Boot/generation id assigned by the entrypoint supervisor for THIS app
+    spawn (immune to PID reuse across container restarts). None when running
+    outside the supervised entrypoint (tests, local runs); the field is then
+    written as null and the bash supervisor treats it as foreign."""
+    return os.environ.get("POLYSIGNAL_HEARTBEAT_BOOT_ID") or None
 
 
 def _runtime_startup_marker_path(settings: Settings) -> Path:
@@ -136,6 +145,8 @@ def _write_runtime_heartbeat_best_effort(
             readiness_ok=readiness_ok,
             readiness_detail=readiness_detail,
             active_readiness_keys=active_readiness_keys,
+            pid=os.getpid(),
+            boot_id=_current_process_boot_id(),
         )
     except OSError:
         _log_probe_write_failure(path)

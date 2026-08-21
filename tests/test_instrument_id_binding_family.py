@@ -75,7 +75,9 @@ def test_string_instrument_id_is_parsed(normalise) -> None:
 
 
 def test_normalised_id_is_accepted_by_a_real_pyo3_api() -> None:
-    """The regression only bites at a real PyO3 call, so assert against one."""
+    """The 1.x regression (Cython vs PyO3 InstrumentId) is gone in 2.0 — there
+    is a single pyo3 InstrumentId — but the normalised boundary must still
+    produce an id a real pyo3 API accepts."""
     from nautilus_trader.core.nautilus_pyo3 import (
         BookAction,
         BookOrder,
@@ -86,12 +88,7 @@ def test_normalised_id_is_accepted_by_a_real_pyo3_api() -> None:
     )
 
     order = BookOrder(OrderSide.BUY, Price.from_str("0.5"), Quantity.from_str("1"), 0)
-    cython_id = CythonInstrumentId.from_str(INSTRUMENT_TEXT)
-
-    with pytest.raises(TypeError):
-        _ = OrderBookDelta(cython_id, BookAction.CLEAR, order, 0, 0, 0, 0)
-
-    normalised = _nautilus_instrument_id(cython_id)
+    normalised = _nautilus_instrument_id(CythonInstrumentId.from_str(INSTRUMENT_TEXT))
     assert isinstance(normalised, Pyo3InstrumentId)
     assert OrderBookDelta(normalised, BookAction.CLEAR, order, 0, 0, 0, 0) is not None
 

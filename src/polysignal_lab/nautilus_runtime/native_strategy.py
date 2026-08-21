@@ -215,6 +215,9 @@ class PolySignalNativeStrategy(Strategy):
         route_strategy_data(
             self, unwrap_custom_data(data), classify=classify_project_owned_data
         )
+        # nautilus 1.231 timers do not fire under LiveNode.run(), so drive the
+        # recovery/reconcile heartbeat from data callbacks (throttled).
+        life.maybe_run_data_driven_recovery(self)
 
     def on_instrument(self, instrument: object) -> None:
         """Subscribe only when Actor-owned metadata marks the instrument wanted."""
@@ -244,6 +247,7 @@ class PolySignalNativeStrategy(Strategy):
     def on_book_deltas(self, deltas: object) -> None:
         snapshot_backstop.record_live_applied(self, deltas)
         mde.evaluate_order_book_event(self, deltas)
+        life.maybe_run_data_driven_recovery(self)
 
     def on_order_submitted(self, event: object) -> None:
         oev.handle_order_lifecycle_event(self, "on_order_submitted", event)

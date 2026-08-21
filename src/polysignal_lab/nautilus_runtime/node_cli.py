@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.node_probes import (
 )
 from polysignal_lab.nautilus_runtime.os_signals import (
     _install_async_os_signal_handlers,
+    _reset_process_stop_request,
     _runtime_intercepts_os_signals,
 )
 from polysignal_lab.nautilus_runtime.runtime_logging import configure_runtime_logging
@@ -65,6 +66,7 @@ async def run_nautilus_cli_async(
     )
     node = bundle.node
     loop = asyncio.get_running_loop()
+    _reset_process_stop_request()
 
     request_stop: Callable[[], None] = event.set
     runtime_logger = cast(logging.Logger, getattr(bundle.context, "logger", logger))

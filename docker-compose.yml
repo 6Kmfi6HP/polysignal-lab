@@ -54,6 +54,10 @@ services:
     env_file:
       - .env
     environment:
+      # Self-sufficient market rotation in the strategy heartbeat (ntlm 1.231
+      # actor timers do not fire under poll()). Explicit opt-in so unit tests
+      # and probe strategies never run Gamma discovery from the event loop.
+      POLYSIGNAL_MARKET_DISCOVERY: "1"
       # Override YAML config via environment (read by pydantic-settings)
       POLYSIGNAL_LAB__TELEGRAM__DRY_RUN: "false"
       POLYSIGNAL_LAB__TELEGRAM__ENABLED: "true"

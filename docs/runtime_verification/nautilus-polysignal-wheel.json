@@ -3,16 +3,16 @@
   "source_kind": "official-nightly",
   "repository": "nautechsystems/nautilus_trader",
   "source_ref": "nightly",
-  "version": "1.231.0a20260802",
-  "source_commit_sha": "d16b3462a1178a762e65eaada8b49a478e186143",
-  "upstream_base_sha": "a930c8afe380025fc0a10c6b2cd6907d6b983e86",
-  "patch_commit_sha": "d16b3462a1178a762e65eaada8b49a478e186143",
-  "upstream_pr": "https://github.com/nautechsystems/nautilus_trader/pull/4656",
+  "version": "2.0.0rc3.dev20260820+17754",
+  "source_commit_sha": "2114cf6f761429e0adb5ca9596fcd7b895b16011",
+  "upstream_base_sha": "2114cf6f761429e0adb5ca9596fcd7b895b16011",
+  "patch_commit_sha": null,
+  "upstream_pr": null,
   "release_tag": "nightly",
   "release_url": "https://packages.nautechsystems.io/simple/nautilus-trader/",
-  "wheel_url": "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260802-cp312-cp312-manylinux_2_35_x86_64.whl",
-  "wheel_filename": "nautilus_trader-1.231.0a20260802-cp312-cp312-manylinux_2_35_x86_64.whl",
-  "wheel_sha256": "a5067497f370b4e2b35375bbf237a144a6affabb3f11a96fbe8dbd77f8907a4c",
+  "wheel_url": "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl",
+  "wheel_filename": "nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl",
+  "wheel_sha256": "0499facf0dc7e83a82e4f7f21f14802d2f249256dfd1424de3122b0443019890",
   "toolchain": {
     "platform": "Linux x86_64",
     "python": "CPython 3.12",
@@ -20,5 +20,6 @@
     "channel": "official-nightly"
   },
   "build_command": "official nightly wheel from https://packages.nautechsystems.io/simple/nautilus-trader/",
-  "verification_command": "uv run python scripts/verify_nautilus_manifest_drift.py"
+  "verification_command": "uv run python scripts/verify_nautilus_manifest_drift.py",
+  "changelog": "Corrected to the downloadable official nightly wheel. The previous 2.0.0rc3.dev20260818+17674 artifact was pinned locally but is absent from the official index. 2.0.0rc3.dev20260820+17754 is indexed and downloadable, and its native binary reports git commit 2114cf6f7. Parse price precision remains Price::from_decimal_dp(value, precision) in the pinned adapter."
 }

@@ -67,6 +67,51 @@ def test_gamma_markets_slug_query_uses_official_builder() -> None:
     assert params == {"slug": "btc-updown-5m-1"}
 
 
+def test_gamma_http_client_sends_user_agent() -> None:
+    """Gamma API rejects requests without a User-Agent with 403 (issue69):
+    the discovery path silently treats 403 as an empty result, so new=0 for
+    hours. The sync httpx client must carry a User-Agent header."""
+    import httpx
+
+    from polysignal_lab.data.polymarket_market_discovery import (
+        _GAMMA_USER_AGENT,
+    )
+
+    # The module exposes a User-Agent constant.
+    assert _GAMMA_USER_AGENT
+    assert "polysignal" in _GAMMA_USER_AGENT.lower()
+
+    # Verify httpx.Client is created with the User-Agent header by patching
+    # the constructor and checking kwargs.
+    captured_kwargs: dict[str, object] = {}
+
+    original_client = httpx.Client
+
+    class _CapturingClient(original_client):  # type: ignore[misc]
+        def __init__(self, **kwargs: object) -> None:
+            captured_kwargs.update(kwargs)
+            super().__init__(**kwargs)
+
+    with patch(
+        "polysignal_lab.data.polymarket_market_discovery.httpx.Client",
+        _CapturingClient,
+    ):
+        from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+
+        discovery = MarketDiscovery(PolymarketDataConfig(), MarketConfig())
+        # Trigger the sync path which creates httpx.Client.
+        with patch.object(discovery, "_request_sync", return_value=[]):
+            discovery.discover_sync(max_event_pages=1)
+
+    headers = captured_kwargs.get("headers")
+    assert headers is not None
+    assert "User-Agent" in headers or b"user-agent" in headers
+    ua = headers.get("User-Agent") or headers.get(b"user-agent") or headers.get(
+        "user-agent"
+    )
+    assert ua == _GAMMA_USER_AGENT
+
+
 def test_paginate_gamma_events_continues_when_page_is_full_cap() -> None:
     pages = {
         0: [{"id": str(i)} for i in range(GAMMA_PAGE_LIMIT)],

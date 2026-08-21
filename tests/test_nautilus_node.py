@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,12 @@ from polysignal_lab.nautilus_runtime.node_builder import (
 )
 from polysignal_lab.nautilus_runtime.node_lifecycle import (
     _run_node_async,
+    _stop_node_async,
     _strategy_names_from_bundle,
+)
+from polysignal_lab.nautilus_runtime.os_signals import (
+    _reset_process_stop_request,
+    request_process_stop,
 )
 from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     validate_native_runtime_settings,
@@ -400,7 +406,10 @@ def test_runtime_bundle_exposes_native_reporting_sources_to_context(
     from polysignal_lab.nautilus_runtime import node as node_module
 
     monkeypatch.setattr(
-        node_module, "build_runtime_node", lambda _settings: native_node
+        node_module, "build_runtime_node", lambda _settings, **_kwargs: native_node
+    )
+    monkeypatch.setattr(
+        node_module, "_current_markets_for_build", lambda _settings: ()
     )
     bundle = _build_nautilus_runtime_bundle(
         settings,
@@ -469,6 +478,147 @@ async def test_sync_live_node_run_is_offloaded_from_event_loop(
     await _run_node_async(Node())
 
     assert calls == ["thread", "run"]
+
+
+@pytest.mark.anyio
+async def test_pyo3_livenode_run_raises_instead_of_cross_thread_panic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3: a PyO3 LiveNode must fail fast, not panic on a worker thread."""
+    calls: list[str] = []
+
+    class LiveNode:
+        __module__ = "nautilus_trader.core.nautilus_pyo3.live"
+
+        def run(self) -> None:
+            calls.append("run")
+
+    async def fake_to_thread(function, *args):
+        calls.append("thread")
+        return function(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    with pytest.raises(RuntimeError, match="PyO3 LiveNode cannot run"):
+        await _run_node_async(LiveNode())
+
+    assert calls == []
+
+
+def test_supervised_restart_callback_never_calls_node_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    raised: list[str] = []
+    callbacks: list[Callable[[str], None]] = []
+
+    class Watchdog:
+        def set_restart_callback(self, callback: Callable[[str], None]) -> None:
+            callbacks.append(callback)
+
+    watchdog = Watchdog()
+    bundle = SimpleNamespace(observability=SimpleNamespace(liveness_watchdog=watchdog))
+    node = SimpleNamespace(stop=lambda: calls.append("stop"))
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.request_process_stop",
+        lambda: raised.append("signal"),
+    )
+
+    from polysignal_lab.nautilus_runtime.node import _bind_supervised_restart
+
+    _bind_supervised_restart(cast(Any, bundle), node)
+    assert len(callbacks) == 1
+    errors: list[str] = []
+
+    def invoke() -> None:
+        try:
+            callbacks[0]("fleet_never_ready")
+        except Exception as exc:  # pragma: no cover - test failure channel
+            errors.append(str(exc))
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    thread.join(timeout=2.0)
+
+    assert errors == []
+    assert calls == []
+    assert raised == ["signal"]
+
+
+def test_request_process_stop_is_idempotent_within_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raised: list[str] = []
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._raise_stop_signal",
+        lambda: raised.append("stop"),
+    )
+    # The fallback timer would SIGKILL the pytest process 20s later.
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._arm_hard_stop_fallback",
+        lambda: None,
+    )
+    _reset_process_stop_request()
+    assert request_process_stop() is True
+    assert request_process_stop() is False
+    assert raised == ["stop"]
+    _reset_process_stop_request()
+
+
+def test_request_process_stop_hard_stop_fallback_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wedged owner thread never re-enters Python, so the SIGINT intent
+    stays pending forever and the supervised restart silently fails. The
+    fallback must SIGKILL the process after a bounded delay; a healthy
+    process exits before the timer ever fires."""
+    import os
+    import signal
+    import time
+
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._raise_stop_signal",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals._HARD_STOP_DELAY_SEC",
+        0.05,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals.os.kill",
+        lambda pid, sig: kills.append((pid, sig)),
+    )
+    _reset_process_stop_request()
+    request_process_stop()
+    deadline = time.monotonic() + 5.0
+    while not kills and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert kills == [(os.getpid(), signal.SIGKILL)]
+    _reset_process_stop_request()
+
+
+@pytest.mark.anyio
+async def test_stop_pyo3_livenode_does_not_cross_thread_call_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    signals: list[str] = []
+
+    class LiveNode:
+        __module__ = "nautilus_trader.core.nautilus_pyo3.live"
+
+    node = LiveNode()
+    setattr(node, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.os_signals.request_process_stop",
+        lambda: signals.append("signal"),
+    )
+
+    await _stop_node_async(node)
+
+    assert calls == []
+    assert signals == ["signal"]
 
 
 @pytest.mark.anyio

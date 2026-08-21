@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import pyarrow as pa
 import pytest
 from nautilus_trader.core import nautilus_pyo3
-from nautilus_trader.serialization.arrow.serializer import ArrowSerializer
 from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
 
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
@@ -65,8 +64,9 @@ def custom_data_samples() -> tuple[object, ...]:
 
 def test_custom_data_round_trips_arrow(custom_data_samples) -> None:
     for data in custom_data_samples:
-        batch = ArrowSerializer.serialize(data)
-        restored = ArrowSerializer.deserialize(type(data), batch)
+        # 2.0 removed ArrowSerializer; the classes carry to_arrow/from_arrow.
+        batch = data.to_arrow()
+        restored = type(data).from_arrow(batch)
 
         assert isinstance(batch, pa.RecordBatch)
         assert batch.schema == type(data)._schema

@@ -39,7 +39,7 @@ def _liveness(path: Path, now: datetime):
 def test_book_arrival_is_recorded_as_last_data_at(tmp_path: Path) -> None:
     path = tmp_path / "hb.json"
 
-    write_runtime_heartbeat(
+    _ = write_runtime_heartbeat(
         path,
         phase="readiness_ok",
         readiness_key="cond-1",
@@ -58,7 +58,7 @@ def test_last_data_at_survives_market_rotation(tmp_path: Path) -> None:
     The data clock must be monotonic across rotations.
     """
     path = tmp_path / "hb.json"
-    write_runtime_heartbeat(
+    _ = write_runtime_heartbeat(
         path,
         phase="readiness_ok",
         readiness_key="cond-1",
@@ -87,7 +87,7 @@ def test_starved_runtime_fails_liveness(tmp_path: Path) -> None:
     for days, and every health signal reporting fine.
     """
     path = tmp_path / "hb.json"
-    write_runtime_heartbeat(
+    _ = write_runtime_heartbeat(
         path,
         phase="readiness_ok",
         readiness_key="cond-1",
@@ -135,7 +135,7 @@ def test_flowing_data_keeps_liveness_ok(tmp_path: Path) -> None:
 def test_starvation_is_not_reported_inside_startup_grace(tmp_path: Path) -> None:
     """A runtime that has not yet received its first book is still booting."""
     path = tmp_path / "hb.json"
-    write_runtime_heartbeat(path, phase="starting", now=T0)
+    _ = write_runtime_heartbeat(path, phase="starting", now=T0)
 
     result = evaluate_liveness(
         path,
@@ -153,7 +153,7 @@ def test_starvation_is_not_reported_inside_startup_grace(tmp_path: Path) -> None
 def test_starvation_check_is_off_when_unconfigured(tmp_path: Path) -> None:
     """Callers that pass no threshold keep the previous liveness semantics."""
     path = tmp_path / "hb.json"
-    write_runtime_heartbeat(
+    _ = write_runtime_heartbeat(
         path,
         phase="readiness_miss",
         readiness_key="cond-1",
@@ -171,3 +171,94 @@ def test_starvation_check_is_off_when_unconfigured(tmp_path: Path) -> None:
     )
 
     assert result.ok is True
+
+
+def test_fresh_heartbeat_with_stale_data_is_data_starvation_not_heartbeat_stale(
+    tmp_path: Path,
+) -> None:
+    """Fresh heartbeat, stale market data: the reason must be
+    data_starvation (market data health), never heartbeat_stale — a healthy
+    process can still be data-starved (the six-day outage shape)."""
+    path = tmp_path / "hb.json"
+    _ = write_runtime_heartbeat(
+        path,
+        phase="readiness_miss",
+        readiness_key="cond-1",
+        readiness_ok=False,
+        readiness_detail=_detail(T0 - timedelta(seconds=601)),
+        now=T0,
+    )
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=T0 - timedelta(hours=1),
+        startup_grace_sec=180,
+        max_readiness_miss_sec=300,
+        max_data_starvation_sec=STARVATION_SEC,
+        now=T0 + timedelta(seconds=1),
+    )
+
+    assert result.ok is False
+    assert result.reason == "data_starvation"
+
+
+def test_stale_heartbeat_with_fresh_data_is_heartbeat_stale_not_data_starvation(
+    tmp_path: Path,
+) -> None:
+    """Fresh market data, stale process heartbeat: heartbeat_stale only. A
+    heartbeat file age must never be blamed on market-data starvation, and
+    vice versa."""
+    path = tmp_path / "hb.json"
+    _ = write_runtime_heartbeat(
+        path,
+        phase="readiness_ok",
+        readiness_key="cond-1",
+        readiness_ok=True,
+        readiness_detail=_detail(T0),
+        now=T0,
+    )
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=T0 - timedelta(hours=1),
+        startup_grace_sec=180,
+        max_readiness_miss_sec=300,
+        max_data_starvation_sec=STARVATION_SEC,
+        now=T0 + timedelta(seconds=300),
+    )
+
+    assert result.ok is False
+    assert result.reason == "heartbeat_stale"
+
+
+def test_stale_heartbeat_and_stale_data_reports_data_starvation(
+    tmp_path: Path,
+) -> None:
+    """Both broken: the market-data reason wins (starved runtimes must be
+    supervised by their data clock even when the heartbeat writer is also
+    wedged — previously the stale branch returned first and the supervisor
+    stayed silent)."""
+    path = tmp_path / "hb.json"
+    _ = write_runtime_heartbeat(
+        path,
+        phase="readiness_ok",
+        readiness_key="cond-1",
+        readiness_ok=True,
+        readiness_detail=_detail(T0 - timedelta(seconds=601)),
+        now=T0,
+    )
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=T0 - timedelta(hours=1),
+        startup_grace_sec=180,
+        max_readiness_miss_sec=300,
+        max_data_starvation_sec=STARVATION_SEC,
+        now=T0 + timedelta(seconds=300),
+    )
+
+    assert result.ok is False
+    assert result.reason == "data_starvation"

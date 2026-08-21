@@ -338,6 +338,33 @@ def subscription_timing_detail(
     }
 
 
+def _adapter_replay_detail(
+    state: MarketSubscriptionState,
+    condition_id: str,
+) -> dict[str, object]:
+    started_at = state.adapter_replay_started_at_by_condition.get(condition_id)
+    attempted = state.book_recovery_dispatched_at_by_condition.get(condition_id, {})
+    attempts = state.book_recovery_attempt_count_by_condition.get(condition_id, 0)
+    return {
+        "adapter_replay_unconfirmed": started_at is not None,
+        "adapter_replay_timeout": started_at is not None and attempts > 0,
+        # Must be an ISO string like every other timestamp in the detail: the
+        # detail is serialized to the runtime heartbeat JSON, and a raw
+        # datetime breaks json.dumps on exactly the recovery window this field
+        # exists to observe (issue #69 B1).
+        "adapter_replay_started_at": (
+            None if started_at is None else started_at.isoformat()
+        ),
+        "recovery_attempt_count": attempts,
+        "recovery_dispatched_at_by_side": {
+            side.value: (
+                None if attempted.get(side) is None else attempted[side].isoformat()
+            )
+            for side in (Side.UP, Side.DOWN)
+        },
+    }
+
+
 def readiness_detail(
     strategy: _ReadinessStrategy,
     condition_id: str,
@@ -365,6 +392,7 @@ def readiness_detail(
             pair is not None and pair.start_ts is not None and now < pair.start_ts
         ),
     )
+    recovery_in_flight = _readiness_recovery_in_flight(strategy, condition_id, state)
     return {
         "condition_id": condition_id,
         "market_id": None if pair is None else pair.market_id,
@@ -378,11 +406,25 @@ def readiness_detail(
         **subscription_timing_detail(state, condition_id, now=now),
         "pending_instrument_ids": list(pending_instrument_ids),
         "awaiting_book_sides": sorted(side.value for side in pending_sides),
+        "missing_sides": sorted(side.value for side in pending_sides),
+        "recovery_in_flight": recovery_in_flight,
         "last_book_at_by_side": last_books,
         "last_book_received_at_by_side": last_receipts,
         "freshness_ms_by_side": freshness_by_side,
         "max_freshness_ms": max_freshness_ms,
+        **_adapter_replay_detail(state, condition_id),
     }
+
+
+def _readiness_recovery_in_flight(
+    strategy: _ReadinessStrategy,
+    condition_id: str,
+    state: MarketSubscriptionState,
+) -> bool:
+    return bool(
+        state.adapter_replay_started_at_by_condition.get(condition_id) is not None
+        or condition_id in strategy._stale_orderbook_recovery_by_condition
+    )
 
 
 def stale_orderbook_recovered(

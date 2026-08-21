@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import cast
@@ -58,16 +59,38 @@ async def _run_node_async(node: object) -> None:
         if inspect.isawaitable(result):
             await result
         return
+    if _is_pyo3_livenode(node):
+        raise RuntimeError(
+            "PyO3 LiveNode cannot run via run_nautilus_cli_async: run() is "
+            "blocking and must execute on the thread that constructed the node, "
+            "but async orchestration offloads it to a worker thread (the pyo3 "
+            "unsendable panic in issue #69). Use the synchronous "
+            "run_nautilus_cli entry point to run live Nautilus."
+        )
     run = getattr(node, "run")
     result = await asyncio.to_thread(run)
     if inspect.isawaitable(result):
         await result
 
 
+def _is_pyo3_livenode(node: object) -> bool:
+    cls = type(node)
+    return cls.__name__ == "LiveNode" and str(getattr(cls, "__module__", "")).startswith(
+        "nautilus_trader"
+    )
+
+
 async def _stop_node_async(node: object) -> None:
     stop_async = getattr(node, "stop_async", None)
     if callable(stop_async):
         result = stop_async()
+    elif _is_pyo3_livenode(node):
+        # PyO3 LiveNode is unsendable. Cross-thread stop() is the panic observed
+        # in Issue #69; the official run() consumes a process signal/owner intent.
+        from polysignal_lab.nautilus_runtime.os_signals import request_process_stop
+
+        request_process_stop()
+        return
     else:
         stop = getattr(node, "stop", None)
         result = await asyncio.to_thread(stop) if callable(stop) else None
@@ -158,17 +181,43 @@ def _run_sync_cli_main(
         settings.logging.directory,
         settings.retention.crash_log_max_bytes,
     )
-    run_method = cast(Callable[..., None], getattr(node, "run"))
-    if "raise_exception" in inspect.signature(run_method).parameters:
-        run_method(raise_exception=True)
-    else:
-        run_method()
+    _run_live_node(node, runtime_logger)
     if strategy_names:
         _dump_thread_stacks(_crash_log_path(settings.logging.directory))
         runtime_logger.warning(
             "LiveNode.run returned unexpectedly with %d strategies active",
             len(strategy_names),
         )
+
+
+_NODE_POLL_INTERVAL_SEC = 0.01
+
+
+def _run_live_node(node: object, runtime_logger: logging.Logger) -> None:
+    """Run the LiveNode's event loop via ``run()``.
+
+    1.x shipped a ``start()`` + ``poll()`` pair because its ``run()`` never
+    fired synchronous Python clock timers (stranding recovery/rotation
+    heartbeats). 2.0 removed both: ``run()`` owns the loop on the current
+    thread (msgbus is thread-local), fires the Python clock, and handles
+    SIGINT/SIGTERM gracefully — the same stop-intent contract the watchdog
+    relies on via ``request_process_stop()``. A callable ``run`` therefore
+    supersedes the legacy pair; anything without it (test doubles) falls back.
+    """
+    run_method = getattr(node, "run", None)
+    if callable(run_method):
+        run_method()
+        return
+    start_method = cast(Callable[..., None], getattr(node, "start"))
+    poll_method = cast(Callable[..., int], getattr(node, "poll"))
+    start_method()
+    try:
+        while bool(getattr(node, "is_running")):
+            _ = poll_method()
+            time.sleep(_NODE_POLL_INTERVAL_SEC)
+    except Exception:
+        runtime_logger.exception("LiveNode poll loop crashed")
+        raise
 
 
 def _finalize_sync_cli_runtime(

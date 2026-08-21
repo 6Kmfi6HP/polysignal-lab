@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # ruff: noqa: E402
 
-from decimal import Decimal
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +18,7 @@ from factories import sample_market_view
 from nautilus_contract_probe import ContractProbeConfig, ContractProbeStrategy
 from nautilus_runtime_contracts_harness import (
     build_backtest_engine,
+    run_node,
     order_statuses,
     register_contract_probe,
     register_contract_probe_on_livenode,
@@ -81,7 +81,7 @@ def test_backtest_dataengine_dispatch_and_order_lifecycle() -> None:
     statuses = order_statuses(engine.cache)
     assert statuses and all(status == "FILLED" for _, status in statuses)
     assert engine.cache.positions_open_count() == 1
-    assert engine.portfolio.is_completely_flat() is False
+    assert engine.portfolio.is_completely_net_flat() is False
     assert strategy.clock_samples  # Clock available at on_start
     safe_dispose(engine)
 
@@ -94,7 +94,7 @@ def test_backtest_cache_portfolio_updates_after_fill() -> None:
 
     assert engine.cache.orders_total_count() == 1
     assert engine.cache.positions_open_count() == 1
-    assert engine.portfolio.is_completely_flat() is False
+    assert engine.portfolio.is_completely_net_flat() is False
     account = engine.cache.account_for_venue(pyo3.Venue("BINANCE"))
     assert account is not None
     safe_dispose(engine)
@@ -166,7 +166,7 @@ def test_backtest_settlement_close_via_strategy_api() -> None:
     assert any(event[0] == "filled" for event in strategy.events)
     assert any(event[0] == "pos_closed" for event in strategy.events)
     assert engine.cache.positions_open_count() == 0
-    assert engine.portfolio.is_completely_flat() is True
+    assert engine.portfolio.is_completely_net_flat() is True
     safe_dispose(engine)
 
 
@@ -202,7 +202,7 @@ def test_backtest_reduce_only_exit_cannot_reverse_position() -> None:
                 self.order_factory.market(
                     instrument_id=inst.id,
                     order_side=pyo3.OrderSide.BUY,
-                    quantity=pyo3.Quantity.from_str("0.001000"),
+                    quantity=pyo3.Quantity.from_str("1.000000"),
                 )
             )
 
@@ -214,7 +214,7 @@ def test_backtest_reduce_only_exit_cannot_reverse_position() -> None:
             self.exit_order = self.order_factory.market(
                 instrument_id=inst.id,
                 order_side=pyo3.OrderSide.SELL,
-                quantity=pyo3.Quantity.from_str("0.002000"),
+                quantity=pyo3.Quantity.from_str("2.000000"),
                 reduce_only=True,
             )
             self.submit_order(self.exit_order)
@@ -255,7 +255,7 @@ def test_instrument_close_contract_expired_closes_position_in_backtest() -> None
     assert any(event[0] == "pos_closed" for event in strategy.events)
     assert engine.cache.positions_open_count() == 0
     assert engine.cache.positions_closed_count() == 1
-    assert engine.portfolio.is_completely_flat() is True
+    assert engine.portfolio.is_completely_net_flat() is True
     safe_dispose(engine)
 
 
@@ -295,9 +295,7 @@ def test_same_strategy_registers_on_livenode_sandbox() -> None:
         workflow_marker="live",
     )
     assert config.strategy_id == "PolySignal-live_probe"
-    node.start()
-    assert node.is_running is True
-    node.stop()
+    assert run_node(node) is True
 
 
 def test_backtest_live_strategy_surface_equivalence() -> None:
@@ -332,8 +330,7 @@ def test_backtest_live_strategy_surface_equivalence() -> None:
     assert type(bt) is ContractProbeStrategy
     assert str(bt.strategy_id) == "PolySignal-equiv_bt"
     assert live_config.strategy_id == "PolySignal-equiv_live"
-    node.start()
-    node.stop()
+    assert run_node(node)
     safe_dispose(engine)
 
 
@@ -355,8 +352,7 @@ def test_same_strategy_class_registers_on_backtest_and_sandbox_livenode() -> Non
     assert type(bt) is ContractProbeStrategy
     assert str(bt.strategy_id) == "PolySignal-same_bt"
     assert live_config.strategy_id == "PolySignal-same_live"
-    node.start()
-    node.stop()
+    assert run_node(node)
     safe_dispose(engine)
 
 
@@ -400,17 +396,13 @@ def test_adapter_enum_parser_maps_side_and_intent_only() -> None:
     assert not hasattr(PolymarketEnumParser, "to_nautilus_order_status")
 
 
-def test_datatester_is_constructible_with_polymarket_data_contract() -> None:
-    from nautilus_trader.common.actor import Actor
-    from nautilus_trader.model.enums import BookType
+def test_datatester_config_contract_with_polymarket_instrument_ids() -> None:
+    """1.x DataTester/DataTesterConfig came from test_kit; 2.0 keeps the config
+    in _libnautilus.testkit (the tester classes themselves were removed)."""
     from nautilus_trader.model.identifiers import InstrumentId
-    from nautilus_trader.test_kit.strategies.tester_data import (
-        DataTester,
-        DataTesterConfig,
-    )
 
     instrument_id = InstrumentId.from_str("123.POLYMARKET")
-    config = DataTesterConfig(
+    config = pyo3.DataTesterConfig(
         instrument_ids=[instrument_id],
         request_instruments=True,
         subscribe_book_deltas=True,
@@ -418,49 +410,38 @@ def test_datatester_is_constructible_with_polymarket_data_contract() -> None:
         manage_book=True,
         log_data=False,
     )
-    tester = DataTester(config)
-
-    assert isinstance(tester, Actor)
-    assert tester.config is config
-    assert config.instrument_ids == [instrument_id]
-    assert config.book_type == BookType.L2_MBP
+    assert list(config.instrument_ids) == [instrument_id]
     assert config.request_instruments is True
     assert config.subscribe_book_deltas is True
     assert config.subscribe_trades is True
     assert config.manage_book is True
 
 
-def test_exectester_is_constructible_with_safe_local_contract() -> None:
+def test_exectester_config_contract_with_safe_local_contract() -> None:
     from nautilus_trader.model.identifiers import InstrumentId
-    from nautilus_trader.test_kit.strategies.tester_exec import (
-        ExecTester,
-        ExecTesterConfig,
-    )
-    from nautilus_trader.trading.strategy import Strategy
 
     instrument_id = InstrumentId.from_str("123.POLYMARKET")
-    config = ExecTesterConfig(
+    config = pyo3.ExecTesterConfig(
         instrument_id=instrument_id,
-        order_qty=Decimal("1"),
+        order_qty=pyo3.Quantity.from_str("1"),
         enable_limit_buys=True,
         enable_limit_sells=False,
         use_post_only=True,
         dry_run=True,
         log_data=False,
     )
-    tester = ExecTester(config)
-
-    assert isinstance(tester, Strategy)
-    assert tester.config is config
     assert config.instrument_id == instrument_id
-    assert config.order_qty == Decimal("1")
+    assert config.order_qty == pyo3.Quantity.from_str("1")
     assert config.enable_limit_buys is True
     assert config.enable_limit_sells is False
     assert config.use_post_only is True
     assert config.dry_run is True
 
 
-def test_tester_importable_registration_reports_native_type_boundary() -> None:
+def test_tester_importable_registration_reports_import_boundary() -> None:
+    """2.0 LiveNode rejects importable configs whose target modules no longer
+    exist (1.x raised 'not an instance of DataActor/Strategy' for the removed
+    Cython test kits; 2.0 reports the module import failure instead)."""
     node = pyo3.LiveNode.builder(
         "TESTERS",
         pyo3.TraderId("TESTERS-001"),
@@ -490,9 +471,9 @@ def test_tester_importable_registration_reports_native_type_boundary() -> None:
         },
     )
 
-    with pytest.raises(RuntimeError, match="not an instance of 'DataActor'"):
+    with pytest.raises(RuntimeError, match="Failed to import module"):
         node.add_actor_from_config(actor_config)
-    with pytest.raises(RuntimeError, match="not an instance of 'Strategy'"):
+    with pytest.raises(RuntimeError, match="Failed to import module"):
         node.add_strategy_from_config(strategy_config)
 
 

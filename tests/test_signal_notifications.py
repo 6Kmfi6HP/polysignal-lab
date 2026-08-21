@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -294,8 +293,7 @@ def test_accepted_signal_publish_failure_leaves_durable_audit() -> None:
         (
             row
             for row in events
-            if row.get("kind") == "telegram_publish"
-            and row.get("status") == "FAILED"
+            if row.get("kind") == "telegram_publish" and row.get("status") == "FAILED"
         ),
         None,
     )

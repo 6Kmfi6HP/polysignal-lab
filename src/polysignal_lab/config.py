@@ -283,6 +283,13 @@ class HealthRestartGateConfig(BaseModel):
     critical_down_sec: int = 300
     min_consecutive_failures: int = 5
     docker_healthcheck_fails_on_restart_recommended: bool = False
+    # Circuit breaker: after this many supervised restarts within the rolling
+    # window, stop restarting and alert instead (issue69 death-spiral breaker).
+    # The window must comfortably span max_restarts_in_window restart cycles:
+    # the supervised restart interval (~critical_down_sec=300s plus startup
+    # grace and shutdown) is ~9-10min, so 3 restarts need ~30min.
+    max_restarts_in_window: int = 3
+    restart_circuit_breaker_window_sec: int = 1800
 
 
 class HealthAlertConfig(BaseModel):
@@ -295,11 +302,18 @@ class HealthAlertConfig(BaseModel):
 
     enabled: bool = True
     poll_interval_sec: int = 30
-    # evaluate_liveness already absorbs the readiness tolerance window
+    # evaluate_liveness already consumes the readiness tolerance window
     # (liveness.max_readiness_miss_sec), so this only has to outlast a
     # flapping healthcheck — not repeat that wait.
     min_unhealthy_sec: int = 60
     min_consecutive_failures: int = 3
+    # Health-alert delivery boundary (issue69): the watchdog polls on its own
+    # thread and must never block on Telegram, and the delivery worker must
+    # survive application event-loop replacement without reusing a closed
+    # loop. These bound the worker queue and its retry backoff.
+    send_queue_size: int = 32
+    send_backoff_base_sec: float = 5.0
+    send_backoff_max_sec: float = 300.0
 
 
 class HealthConfig(BaseModel):

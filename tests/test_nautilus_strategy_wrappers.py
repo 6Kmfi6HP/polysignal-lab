@@ -22,7 +22,6 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import OrderSubmitter
 
 DEFAULT_DATA_NAMES = (
     "order_book_deltas",
@@ -293,8 +292,6 @@ def test_each_wrapper_preserves_custom_data_names(strategy_name: str) -> None:
 def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved() -> (
     None
 ):
-    from unittest.mock import patch
-
     view = _view()
     approved = _decision(side=Side.UP)
     rejected = _decision(side=Side.DOWN)

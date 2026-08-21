@@ -263,6 +263,7 @@ def test_build_polymarket_data_client_config_subscribes_to_future_markets(
     assert getattr(polymarket, "auto_load_debounce_ms") == 100
     assert getattr(polymarket, "auto_load_max_retries") == 12
     assert getattr(polymarket, "subscribe_new_markets") is False
+    # Locked pyo3 constructor takes an integer minutes value.
     assert getattr(polymarket, "update_instruments_interval_mins") == 1
 
 

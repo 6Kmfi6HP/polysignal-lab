@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 from collections.abc import Callable, Mapping
 from typing import cast
 
@@ -244,6 +243,13 @@ def build_polymarket_data_client_config(
     polymarket = settings.data.polymarket
     kwargs: dict[str, object] = {
         "instrument_config": instrument_config,
+        # 2.0.0rc3 defaults to SOCKUDO, but Polymarket's WS endpoint rejects
+        # its subscription payload (code=1008 "invalid subscription payload"),
+        # causing a 10-second reconnect loop.  TUNGSTENITE (the only option in
+        # 1.x) produces a payload the server accepts.
+        "transport_backend": _pyo3.TransportBackend.TUNGSTENITE,  # pyright: ignore[reportAttributeAccessIssue]
+        # Locked pyo3 constructor takes a u64 minutes value (int only); keep a
+        # 1-minute provider refresh budget for the adapter instrument cache.
         "update_instruments_interval_mins": 1,
         # The locked pyo3 constructor does not expose new_market_filter;
         # keep adapter-wide events disabled rather than cache every Polymarket market.
@@ -310,8 +316,12 @@ def build_polymarket_exec_client_config(settings: Settings) -> object:
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:
-    """Import a config/factory callable. Tests monkeypatch this seam."""
-    module = importlib.import_module(module_name)
+    """Import a config/factory callable. Tests monkeypatch this seam.
+
+    Resolves through ``load_nautilus_module`` so legacy 1.x module paths
+    (``nautilus_trader.core.nautilus_pyo3``) keep working on the 2.0 wheel.
+    """
+    module = load_nautilus_module(module_name)
     return cast(Callable[..., object], getattr(module, attr_name))
 
 
