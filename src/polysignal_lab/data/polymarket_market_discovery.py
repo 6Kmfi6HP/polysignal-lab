@@ -21,6 +21,11 @@ from polysignal_lab.utils import utc_now
 JsonObject = dict[str, JsonValue]
 JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
 
+# Polymarket Gamma API rejects requests without a User-Agent with 403 (issue69).
+# The discovery path treats 403 as an empty result, so missing User-Agent causes
+# new=0 for hours — the fleet never discovers new markets.
+_GAMMA_USER_AGENT: Final[str] = "polysignal-lab/1.0 (+https://github.com/polysignal-lab)"
+
 
 class _JsonResponse(Protocol):
     def raise_for_status(self) -> object: ...
@@ -47,7 +52,10 @@ class _HttpxJsonResponse:
 
 class _HttpxAsyncJsonClient:
     def __init__(self) -> None:
-        self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=15.0)
+        self._client: httpx.AsyncClient = httpx.AsyncClient(
+            timeout=15.0,
+            headers={"User-Agent": _GAMMA_USER_AGENT},
+        )
 
     async def get(
         self, url: str, *, params: dict[str, str] | None = None
@@ -81,7 +89,6 @@ class MarketDiscovery:
     ) -> _AsyncJsonClient:
         self.client = client or _HttpxAsyncJsonClient()
         return self.client
-
     async def discover(
         self,
         *,
@@ -109,7 +116,10 @@ class MarketDiscovery:
         stale_grace_sec: int = 0,
         max_event_pages: int | None = None,
     ) -> list[Market]:
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(
+            timeout=15.0,
+            headers={"User-Agent": _GAMMA_USER_AGENT},
+        ) as client:
             payloads = self._fetch_gamma_events_sync(
                 client,
                 max_pages=max_event_pages,

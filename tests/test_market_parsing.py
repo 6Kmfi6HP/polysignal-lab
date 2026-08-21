@@ -172,3 +172,72 @@ def test_gamma_half_half_outcome_prices_resolved_without_side_winner() -> None:
 
     assert market.status == MarketStatus.RESOLVED
     assert market.resolved_outcome is None
+
+
+# --- issue69: discovery outcome parsing follows the exchange tick grid ---
+
+
+def test_gamma_numeric_order_price_min_tick_precision_flows_into_market_info(
+    monkeypatch,
+) -> None:
+    """Gamma's official numeric `orderPriceMinTickSize` must win over the
+    discovery fallback (0.01): the parsed instrument then carries precision 3
+    exactly like the live Rust instrument for the same market."""
+    payload = _gamma_payload()
+    payload["clobTokenIds"] = '["123", "456"]'
+    payload["orderPriceMinTickSize"] = 0.001
+    seen: list[dict[str, object]] = []
+
+    def parse_binary_option(
+        market_info: dict[str, object],
+        token_id: str,
+        outcome: str,
+        ts_init: int | None = None,
+    ) -> object:
+        seen.append(market_info)
+        return type("ParsedBinaryOption", (), {"outcome": f"Parsed {outcome}"})()
+
+    import polysignal_lab.data.provider.gamma_market as gamma_market
+
+    monkeypatch.setattr(
+        gamma_market,
+        "parse_nautilus_polymarket_instrument",
+        parse_binary_option,
+    )
+
+    market = Market.from_gamma(payload, asset="BTC", timeframe="5m")
+
+    assert market is not None
+    assert len(seen) == 2
+    # the parser receives the authoritative numeric Gamma tick, not "0.01"
+    assert seen[0]["minimum_tick_size"] == 0.001
+
+
+def test_gamma_legacy_tick_string_still_used_when_numeric_absent(
+    monkeypatch,
+) -> None:
+    payload = _gamma_payload()
+    payload["clobTokenIds"] = '["123", "456"]'
+    payload["minimumTickSize"] = "0.001"
+    seen: list[dict[str, object]] = []
+
+    def parse_binary_option(
+        market_info: dict[str, object],
+        token_id: str,
+        outcome: str,
+        ts_init: int | None = None,
+    ) -> object:
+        seen.append(market_info)
+        return type("ParsedBinaryOption", (), {"outcome": f"Parsed {outcome}"})()
+
+    import polysignal_lab.data.provider.gamma_market as gamma_market
+
+    monkeypatch.setattr(
+        gamma_market,
+        "parse_nautilus_polymarket_instrument",
+        parse_binary_option,
+    )
+
+    Market.from_gamma(payload, asset="BTC", timeframe="5m")
+
+    assert seen[0]["minimum_tick_size"] == "0.001"

@@ -82,3 +82,63 @@ def test_official_rust_binary_option_info_builds_active_market() -> None:
     assert market.end_ts is not None
     assert market.token_for(Side.UP).token_id == "up1"
     assert market.token_for(Side.DOWN).token_id == "down1"
+
+
+# --- issue69: projected payloads carry the instrument's authoritative tick ---
+
+
+def test_rust_instrument_payload_carries_canonical_minimum_tick() -> None:
+    """Official Rust instruments (no gamma payload) must still project the
+    exact minimum tick so downstream Gamma-shaped re-parses keep the SAME
+    price precision as the instrument."""
+    from nautilus_trader._libnautilus.model import (
+        AssetClass,
+        BinaryOption,
+        Currency,
+        InstrumentId,
+        Price,
+        Quantity,
+        Symbol,
+    )
+
+    builder = PolymarketInstrumentMarketBuilder(
+        MarketConfig(assets=["BTC"], timeframes=["5m"])
+    )
+    start = datetime.now(UTC)
+    end = start + timedelta(minutes=5)
+    price_increment = Price.from_str("0.001")
+    size_increment = Quantity.from_str("0.000001")
+
+    def rust_instrument(token_id: str, outcome: str) -> object:
+        return BinaryOption(
+            instrument_id=InstrumentId.from_str(
+                f"0xcondition1-{token_id}.POLYMARKET"
+            ),
+            raw_symbol=Symbol(token_id),
+            asset_class=AssetClass.ALTERNATIVE,
+            currency=Currency.from_str("USDC"),
+            activation_ns=int(start.timestamp() * 1e9),
+            expiration_ns=int(end.timestamp() * 1e9),
+            price_precision=price_increment.precision,
+            size_precision=size_increment.precision,
+            price_increment=price_increment,
+            size_increment=size_increment,
+            ts_event=0,
+            ts_init=0,
+            outcome=outcome,
+            info={
+                "token_id": token_id,
+                "condition_id": "0xcondition1",
+                "market_id": "m1",
+                "market_slug": "btc-updown-5m-1",
+            },
+        )
+
+    assert builder.add(rust_instrument("uptoken", "Up")) is None
+    market = builder.add(rust_instrument("downtoken", "Down"))
+    assert market is not None
+    raw = market.raw
+    # market raw payload must expose the tick for downstream consumers
+    assert raw.get("minimum_tick_size") == "0.001"
+    assert raw.get("minimumTickSize") == "0.001"
+    assert raw.get("orderPriceMinTickSize") == "0.001"

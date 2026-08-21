@@ -16,8 +16,9 @@
 from __future__ import annotations
 
 import time
-from decimal import Decimal
-from typing import Any, cast
+from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
+from typing import Any, Final, cast
 
 import pandas as pd
 
@@ -47,7 +48,9 @@ except ImportError:
 POLYMARKET_VENUE = _lib_polymarket.POLYMARKET_VENUE
 
 
-def get_polymarket_instrument_id(condition_id: str, token_id: str | int) -> InstrumentId:
+def get_polymarket_instrument_id(
+    condition_id: str, token_id: str | int
+) -> InstrumentId:
     return InstrumentId.from_str(f"{condition_id}-{token_id}.{POLYMARKET_VENUE}")
 
 
@@ -134,9 +137,191 @@ def build_markets_query(filters: dict[str, Any] | None = None) -> dict[str, Any]
     return params
 
 
+# --- price precision (issue69: one authoritative tick -> precision mapping) ---
+#
+# Polymarket reports the same price grid under several spellings: Gamma
+# `orderPriceMinTickSize` (JSON number), legacy `minimum_tick_size`/`tickSize`
+# (string) and the free-form decimal strings carried by book messages
+# ("0.42", "0.420", "0.4").  Nautilus prices are fixed-precision: a Price built
+# from a book string inherits the STRING's decimal places, so "0.42" becomes a
+# precision-2 Price.  When such a Price reaches an order book whose instrument
+# has price_precision=3 the native boundary rejects it with the live issue69
+# failure `Invalid delta order price precision 2, expected 3`.
+#
+# The authoritative price grid is the market minimum tick size, not the number
+# of decimals in any one book message.  Everything below funnels raw tick and
+# price values through Decimal (never binary float) so project-side objects
+# always land on the instrument's own grid.
+
+_WEI_PRECISION: Final = 18  # Nautilus Price/Quantity hard cap (WEI_PRECISION).
+
+_MINIMUM_TICK_SIZE_KEYS: Final = (
+    "minimum_tick_size",
+    "minimumTickSize",
+    "tick_size",
+    "tickSize",
+)
+_GAMMA_MINIMUM_TICK_SIZE_KEYS: Final = (
+    "orderPriceMinTickSize",
+    "orderPriceMinTick",
+    "minimumTickSize",
+    "minimum_tick_size",
+    "tickSize",
+    "tick_size",
+)
+
+
+def extract_minimum_tick_size(market_info: Mapping[str, Any] | None) -> Any:
+    """Return the best-known minimum tick value from a Gamma payload.
+
+    Consults the top-level metadata keys first, then the embedded
+    ``_gamma_original`` payload (the official Gamma field
+    ``orderPriceMinTickSize`` is numeric). Returns None when every source is
+    absent/empty so callers can apply their own documented default.
+    """
+    if not isinstance(market_info, Mapping):
+        return None
+    mappings: list[Mapping[str, Any]] = [market_info]
+    original = market_info.get("_gamma_original")
+    if isinstance(original, Mapping):
+        mappings.append(cast(Mapping[str, Any], original))
+    for mapping in mappings:
+        for key in _MINIMUM_TICK_SIZE_KEYS:
+            value = mapping.get(key)
+            if value is not None and value != "":
+                return value
+    for mapping in mappings:
+        for key in _GAMMA_MINIMUM_TICK_SIZE_KEYS:
+            if key in _MINIMUM_TICK_SIZE_KEYS:
+                continue
+            value = mapping.get(key)
+            if value is not None and value != "":
+                return value
+    return None
+
+
+def canonical_minimum_tick_size(value: Any) -> Decimal:
+    """Validate a minimum tick size and return its trailing-zero-free Decimal.
+
+    Accepted forms: "0.01", "0.001", "1", "1e-3", 0.001 (float), 1 (int).
+    Rejects: None, "", NaN/inf, zero, negatives and bools. Input never
+    round-trips through binary float, so "0.0010" canonicalizes to 0.001 and
+    1.0 to 1 (Nautilus Price would otherwise keep precision 4 or 1).
+    """
+    if isinstance(value, bool) or value is None:
+        raise ValueError(
+            f"Polymarket minimum tick size must be a positive decimal, was {value!r}"
+        )
+    text = value.strip() if isinstance(value, str) else str(value)
+    if not text:
+        raise ValueError(
+            "Polymarket minimum tick size must be a positive decimal, was empty"
+        )
+    try:
+        tick = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError(
+            f"Polymarket minimum tick size {value!r} is not a decimal number"
+        ) from exc
+    if not tick.is_finite() or tick <= 0:
+        raise ValueError(
+            f"Polymarket minimum tick size must be a positive decimal, was {value!r}"
+        )
+    return tick.normalize()
+
+
+def price_precision_from_minimum_tick_size(value: Any) -> int:
+    """Exact price precision implied by a tick size.
+
+    0.01 -> 2, 0.001 -> 3, 1 -> 0, "0.0010" -> 3 (trailing zeros stripped),
+    "1e-3" -> 3. Precisely the canonical Decimal exponent, capped at the
+    Nautilus WEI_PRECISION=18.
+    """
+    tick = canonical_minimum_tick_size(value)
+    exponent = tick.as_tuple().exponent
+    if not isinstance(exponent, int):
+        # Only reachable for non-finite Decimals (already rejected above).
+        raise ValueError(
+            f"Polymarket minimum tick size {value!r} is not a decimal number"
+        )
+    precision = max(0, -exponent)
+    if precision > _WEI_PRECISION:
+        raise ValueError(
+            f"Polymarket minimum tick size {value!r} requires precision "
+            f"{precision}, exceeding Nautilus limit {_WEI_PRECISION}"
+        )
+    return precision
+
+
+def price_increment_from_minimum_tick_size(value: Any) -> Price:
+    """Official Price increment (canonical precision) for a tick size."""
+    tick = canonical_minimum_tick_size(value)
+    return Price.from_decimal(tick)
+
+
+def _coerce_precision(precision: Any, *, what: str) -> int:
+    if isinstance(precision, bool) or not isinstance(precision, int):
+        raise ValueError(f"{what} precision must be an int, was {precision!r}")
+    if not 0 <= precision <= _WEI_PRECISION:
+        raise ValueError(
+            f"{what} precision must be in 0..{_WEI_PRECISION}, was {precision}"
+        )
+    return precision
+
+
+def make_price_at_precision(value: Any, price_precision: Any) -> Price:
+    """Quantize a raw Polymarket price value onto an exact Nautilus price grid.
+
+    String/float/Decimal input is converted via Decimal (no binary float
+    error): 0.42 -> 0.420 at precision 3, 0.421 unchanged. Values with more
+    decimals than ``price_precision`` are quantized with the official Nautilus
+    rule (``Price.from_decimal_dp``, ROUND_HALF_EVEN); venue book prices are
+    tick-aligned, so that only fires on malformed input.
+    """
+    precision = _coerce_precision(price_precision, what="price")
+    if value is None:
+        raise ValueError("Polymarket price value is required")
+    text = value.strip() if isinstance(value, str) else str(value)
+    if not text:
+        raise ValueError("Polymarket price value is empty")
+    try:
+        decimal = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError(f"Polymarket price {value!r} is not a decimal number") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"Polymarket price must be finite, was {value!r}")
+    return Price.from_decimal_dp(decimal, precision)
+
+
+def make_quantity_at_precision(value: Any, size_precision: Any) -> Quantity:
+    """Quantize a raw Polymarket size value onto the instrument size grid."""
+    precision = _coerce_precision(size_precision, what="size")
+    if value is None:
+        raise ValueError("Polymarket size value is required")
+    text = value.strip() if isinstance(value, str) else str(value)
+    if not text:
+        raise ValueError("Polymarket size value is empty")
+    try:
+        decimal = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError(f"Polymarket size {value!r} is not a decimal number") from exc
+    if not decimal.is_finite() or decimal < 0:
+        raise ValueError(
+            f"Polymarket size must be a finite non-negative decimal, was {value!r}"
+        )
+    return Quantity.from_decimal_dp(decimal, precision)
+
+
 # --- instrument parsing (mirrors old common/parsing.py) ---
 
 _PUSD = _lib_model.Currency.from_str("USDC")
+
+
+def _expiration_ns(end_date_iso: Any) -> int:
+    """Expiration ns from the market end date (10-year default when absent)."""
+    if end_date_iso:
+        return int(pd.Timestamp(end_date_iso).value)
+    return int((pd.Timestamp.now(tz="UTC") + pd.DateOffset(years=10)).value)
 
 
 def extract_fee_rates(market_info: dict[str, Any]) -> tuple[Decimal, Decimal]:
@@ -173,18 +358,21 @@ def parse_polymarket_instrument(
     )
     raw_symbol = Symbol(get_polymarket_token_id(instrument_id))
     description = market_info["question"]
-    price_increment = Price.from_str(str(market_info["minimum_tick_size"]))
+    # Price grid authority: the market minimum tick size (official Gamma
+    # `orderPriceMinTickSize` or legacy spellings) — never a book string's
+    # decimal places ("0.42" would yield 2 vs the instrument's 3, issue69).
+    raw_tick_size = extract_minimum_tick_size(market_info)
+    if raw_tick_size is None:
+        raise ValueError(
+            f"Polymarket market {instrument_id} missing minimum tick size "
+            "metadata; cannot derive price precision"
+        )
+    price_increment = price_increment_from_minimum_tick_size(raw_tick_size)
+    price_precision = price_increment.precision
     # Trades are reported with 6-decimal collateral increments.
     size_increment = Quantity.from_str("0.000001")
-    end_date_iso = market_info["end_date_iso"]
-
-    if end_date_iso:
-        expiration_ns = pd.Timestamp(end_date_iso).value
-    else:
-        expiration_ns = (pd.Timestamp.now(tz="UTC") + pd.DateOffset(years=10)).value
-
     maker_fee, taker_fee = extract_fee_rates(market_info)
-
+    expiration_ns = _expiration_ns(market_info.get("end_date_iso"))
     ts_init = ts_init if ts_init is not None else time.time_ns()
 
     return BinaryOption(
@@ -195,7 +383,7 @@ def parse_polymarket_instrument(
         asset_class=AssetClass.ALTERNATIVE,
         currency=_PUSD,
         price_increment=price_increment,
-        price_precision=price_increment.precision,
+        price_precision=price_precision,
         size_increment=size_increment,
         size_precision=size_increment.precision,
         activation_ns=0,
