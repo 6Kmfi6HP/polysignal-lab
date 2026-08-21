@@ -25,7 +25,7 @@ dependencies = [
   "pyarrow>=25.0",
   "msgspec>=0.21",
   "pandas>=2.3",
-  "nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260818+17674-cp312-cp312-manylinux_2_34_x86_64.whl#sha256=dbcd8057b29fae014fb313e55b13f1f0860ded90d39f063938ff3549c4326b14",
+  "nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl#sha256=0499facf0dc7e83a82e4f7f21f14802d2f249256dfd1424de3122b0443019890",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +40,7 @@ dev = [
   "hypothesis>=6.0",
 ]
 nautilus = [
-  "nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260818+17674-cp312-cp312-manylinux_2_34_x86_64.whl#sha256=dbcd8057b29fae014fb313e55b13f1f0860ded90d39f063938ff3549c4326b14",
+  "nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl#sha256=0499facf0dc7e83a82e4f7f21f14802d2f249256dfd1424de3122b0443019890",
 ]
 [project.scripts]
 polysignal-lab = "polysignal_lab.app.main:main"

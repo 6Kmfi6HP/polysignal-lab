@@ -515,10 +515,10 @@ wheels = [
 
 [[package]]
 name = "nautilus-trader"
-version = "2.0.0rc3.dev20260818+17674"
-source = { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260818+17674-cp312-cp312-manylinux_2_34_x86_64.whl" }
+version = "2.0.0rc3.dev20260820+17754"
+source = { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl" }
 wheels = [
-    { filename = "nautilus_trader-2.0.0rc3.dev20260818+17674-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:dbcd8057b29fae014fb313e55b13f1f0860ded90d39f063938ff3549c4326b14" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:0499facf0dc7e83a82e4f7f21f14802d2f249256dfd1424de3122b0443019890" },
 ]
 
 [package.metadata]
@@ -704,8 +704,8 @@ requires-dist = [
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.4" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "msgspec", specifier = ">=0.21" },
-    { name = "nautilus-trader", extras = ["polymarket"], url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260818+17674-cp312-cp312-manylinux_2_34_x86_64.whl" },
-    { name = "nautilus-trader", extras = ["polymarket"], marker = "extra == 'nautilus'", url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260818+17674-cp312-cp312-manylinux_2_34_x86_64.whl" },
+    { name = "nautilus-trader", extras = ["polymarket"], url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl" },
+    { name = "nautilus-trader", extras = ["polymarket"], marker = "extra == 'nautilus'", url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl" },
     { name = "pandas", specifier = ">=2.3" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.0" },
     { name = "py-clob-client-v2", specifier = ">=0.1.0" },

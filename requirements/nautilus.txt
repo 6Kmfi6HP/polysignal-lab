@@ -1,1 +1,1 @@
-nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260802-cp312-cp312-manylinux_2_35_x86_64.whl#sha256=a5067497f370b4e2b35375bbf237a144a6affabb3f11a96fbe8dbd77f8907a4c
+nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc3.dev20260820+17754-cp312-cp312-manylinux_2_34_x86_64.whl#sha256=0499facf0dc7e83a82e4f7f21f14802d2f249256dfd1424de3122b0443019890

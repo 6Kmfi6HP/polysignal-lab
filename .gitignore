@@ -39,5 +39,6 @@ backups/
 graphify-out/
 # Retention maintenance output (rotated JSONL/runtime log archives)
 archive/
-wheels/ # local patched nautilus wheels (do not commit)
+# Local nautilus wheels are build inputs only (do not commit).
+wheels/
 reports/
