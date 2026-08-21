@@ -243,6 +243,11 @@ def build_polymarket_data_client_config(
     polymarket = settings.data.polymarket
     kwargs: dict[str, object] = {
         "instrument_config": instrument_config,
+        # 2.0.0rc3 defaults to SOCKUDO, but Polymarket's WS endpoint rejects
+        # its subscription payload (code=1008 "invalid subscription payload"),
+        # causing a 10-second reconnect loop.  TUNGSTENITE (the only option in
+        # 1.x) produces a payload the server accepts.
+        "transport_backend": _pyo3.TransportBackend.TUNGSTENITE,  # pyright: ignore[reportAttributeAccessIssue]
         # Locked pyo3 constructor takes a u64 minutes value (int only); keep a
         # 1-minute provider refresh budget for the adapter instrument cache.
         "update_instruments_interval_mins": 1,

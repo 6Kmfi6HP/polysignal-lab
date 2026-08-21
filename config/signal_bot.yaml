@@ -118,7 +118,7 @@ health:
     critical_components:
       - runtime
       - sqlite
-    critical_down_sec: 300
+    critical_down_sec: 1800
     min_consecutive_failures: 5
     docker_healthcheck_fails_on_restart_recommended: false
 strategies:
@@ -261,7 +261,7 @@ runtime:
     intercept_os_signals: false
     sandbox_book_type: L2_MBP
     polymarket_data:
-      ws_max_subscriptions_per_connection: 200
+      ws_max_subscriptions_per_connection: 20
     spot_data:
       source: polymarket_rtds
 
