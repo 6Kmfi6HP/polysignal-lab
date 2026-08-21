@@ -434,3 +434,47 @@ def test_single_current_heartbeat_cannot_pass_all_5_cycles(
     assert summary["status"] == "failed"  # 1 book cannot prove 5 cycles
     assert summary["cycles_observed"] == 5
     assert not all(MONITOR._books_after_reconnect(c) for c in summary["cycles"])
+
+
+def test_assess_heartbeat_counts_replay_timeout_as_unrecovered() -> None:
+    """A stuck condition whose replay marker is stale (explicit timeout with
+    recovery attempts) must be reported unrecovered, not replay_unconfirmed."""
+    heartbeat = {
+        "updated_at": "2026-08-16T06:00:00+00:00",
+        "phase": "readiness_miss",
+        "fatal": False,
+        "last_data_at": "2026-08-16T06:00:00+00:00",
+        "readiness_miss_started_at_by_key": {},
+        "readiness_detail_by_key": {
+            "cond-1": {
+                "subscription_state": "awaiting_first_book",
+                "adapter_replay_unconfirmed": True,
+                "adapter_replay_timeout": True,
+                "recovery_attempt_count": 3,
+                "last_book_received_at_by_side": {},
+                "last_book_at_by_side": {},
+            }
+        },
+    }
+    summary = MONITOR.assess_heartbeat(heartbeat)
+    assert summary["status"] == "unrecovered"
+    assert summary["unrecovered"] == ["cond-1"]
+    assert summary["replay_unconfirmed"] == []
+
+
+def test_transport_errors_counts_ws_close_codes() -> None:
+    """B4 monitor should expose transport-level close/restore evidence so a
+    failing restore loop is not hidden behind a generic status string."""
+    lines = "\n".join(
+        [
+            "code=1013 slow consumer",
+            "code=1008 invalid subscription payload",
+            "code=1000 all subscribed assets resolved",
+        ]
+    )
+    assert MONITOR._transport_errors(lines) == {
+        "1000": 1,
+        "1001": 0,
+        "1008": 1,
+        "1013": 1,
+    }

@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 import tempfile
 from pathlib import Path
 
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.observability.runtime_health import (
     REPLAY_GRACE_SEC,
     evaluate_liveness,
@@ -233,3 +234,92 @@ def test_liveness_ok_within_grace_then_restart_after_grace_and_max_miss() -> Non
         )
         assert later.ok is False
         assert later.reason == "readiness_miss"
+
+
+# --------------------------------------------------------------------------- B5: timeout evidence
+
+
+def test_adapter_replay_detail_exposes_timeout_and_recovery_attempts() -> None:
+    """B5: readiness detail must carry a bounded replay timeout signal and the
+    number of recovery batches dispatched for the current generation."""
+    state = MarketSubscriptionState()
+    state.adapter_replay_started_at_by_condition["eth-5m"] = T0
+    state.book_recovery_attempt_count_by_condition["eth-5m"] = 2
+    state.book_recovery_dispatched_at_by_condition["eth-5m"] = {
+        Side.UP: T0,
+        Side.DOWN: T0 + timedelta(seconds=1),
+    }
+    detail = _adapter_replay_detail(state, "eth-5m")
+    assert detail["adapter_replay_unconfirmed"] is True
+    assert detail["adapter_replay_timeout"] is True
+    assert detail["recovery_attempt_count"] == 2
+    assert detail["recovery_dispatched_at_by_side"] == {
+        "UP": T0.isoformat(),
+        "DOWN": (T0 + timedelta(seconds=1)).isoformat(),
+    }
+    assert json.dumps(detail, sort_keys=True)
+
+
+def test_adapter_replay_timeout_counts_toward_liveness_miss_after_grace() -> None:
+    """B5: after the bounded replay grace elapses without a book, an explicit
+    timeout (marker + recovery attempts) means the never-READY condition is no
+    longer warmup and must arm the readiness-miss clock."""
+    detail = _once_ready_detail(replay_at=T0 - timedelta(seconds=400))
+    detail["subscription_state"] = "awaiting_first_book"
+    detail["first_bilateral_book_ever_at"] = None
+    detail["adapter_replay_timeout"] = True
+    detail["recovery_attempt_count"] = 3
+    assert _detail_counts_toward_readiness_miss(detail, observed_at=T0) is True
+
+    # A fresh in-flight replay without timeout evidence stays warmup-exempt.
+    fresh = _once_ready_detail(replay_at=T0 - timedelta(seconds=60))
+    fresh["subscription_state"] = "awaiting_first_book"
+    fresh["first_bilateral_book_ever_at"] = None
+    fresh["adapter_replay_timeout"] = False
+    fresh["recovery_attempt_count"] = 1
+    assert _detail_counts_toward_readiness_miss(fresh, observed_at=T0) is False
+
+
+def test_active_book_recovery_batch_defers_readiness_miss_for_orderbook_gap(
+    tmp_path: Path,
+) -> None:
+    """Missing orderbook data that is being actively reloaded must not flap
+    the healthcheck. The runtime is not active-but-unsubscribed: it has a
+    concrete missing-side set and an unconfirmed adapter replay boundary, so
+    the per-condition readiness-miss clock stays disarmed while the process
+    keeps recovering. Global data starvation remains the backstop."""
+    detail = _once_ready_detail(replay_at=T0 - timedelta(seconds=400))
+    detail["subscription_state"] = "awaiting_first_book"
+    detail["first_bilateral_book_ever_at"] = None
+    detail["adapter_replay_timeout"] = True
+    detail["recovery_attempt_count"] = 8
+    detail["awaiting_book_sides"] = ["DOWN", "UP"]
+    detail["pending_instrument_ids"] = []
+    assert _detail_counts_toward_readiness_miss(detail, observed_at=T0) is False
+
+
+def test_bookless_recovery_without_concrete_work_still_arms_readiness_miss() -> None:
+    """A replay timeout with no current missing sides/instruments is not an
+    active recovery; it must stay under the readiness-miss clock."""
+    detail = _once_ready_detail(replay_at=T0 - timedelta(seconds=400))
+    detail["subscription_state"] = "awaiting_first_book"
+    detail["first_bilateral_book_ever_at"] = None
+    detail["adapter_replay_timeout"] = True
+    detail["recovery_attempt_count"] = 8
+    detail["awaiting_book_sides"] = []
+    detail["pending_instrument_ids"] = []
+    assert _detail_counts_toward_readiness_miss(detail, observed_at=T0) is True
+
+
+def test_recovery_in_flight_detail_defers_once_ready_stale_orderbook() -> None:
+    """A once-READY condition that hit stale_orderbook but whose current
+    readiness detail declares an in-flight recovery must not arm the
+    per-condition miss clock; missing order data is self-recovering."""
+    detail = _once_ready_detail(replay_at=None, state="stale_orderbook")
+    detail["recovery_in_flight"] = True
+    assert _detail_counts_toward_readiness_miss(detail, observed_at=T0) is False
+
+
+def test_absent_recovery_in_flight_keeps_prior_stale_contract() -> None:
+    detail = _once_ready_detail(replay_at=None, state="stale_orderbook")
+    assert _detail_counts_toward_readiness_miss(detail, observed_at=T0) is True

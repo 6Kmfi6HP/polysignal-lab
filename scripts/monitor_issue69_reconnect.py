@@ -80,12 +80,15 @@ def assess_heartbeat(heartbeat: dict[str, Any]) -> dict[str, Any]:
             if not received.get(side) or not book_at.get(side)
         ]
         # subscription_readiness_state never emits an "adapter_replay_unconfirmed"
-        # state name; the unconfirmed signal is the detail field only.
+        # state name; the unconfirmed signal is the detail field only. An
+        # explicit adapter replay timeout (marker + recovery attempts, grace
+        # elapsed) is NOT a healthy in-flight replay: count it unrecovered.
         replay = bool(detail.get("adapter_replay_unconfirmed"))
+        replay_timeout = bool(detail.get("adapter_replay_timeout"))
         readiness_miss = bool(misses.get(condition_id)) and not replay
-        if replay:
+        if replay and not replay_timeout:
             replay_unconfirmed.append(condition_id)
-        elif missing_sides or readiness_miss:
+        elif missing_sides or readiness_miss or replay_timeout:
             unrecovered.append(condition_id)
 
     if unrecovered:
@@ -203,6 +206,30 @@ def _discover_rust_log(directory: Path) -> Path | None:
 
 def _log_has_markers(log_text: str) -> bool:
     return any(_is_reconnect_line(line) for line in log_text.splitlines())
+
+
+def _transport_errors(log_text: str) -> dict[str, int]:
+    """Count transport-level close/restore evidence from the Rust log.
+
+    Keeps the monitor honest about external WS failures: code=1008 and
+    code=1013 both indicate connection/subscription problems the Python
+    subscription-control plane cannot directly fix. code=1000/1001 are
+    included so a clean rotation shutdown is not invisible.
+    """
+    counts: dict[str, int] = {}
+    for code in ("1000", "1001", "1008", "1013"):
+        counts[code] = 0
+    for line in log_text.splitlines():
+        lower = line.lower()
+        if "code=1000" in lower:
+            counts["1000"] += 1
+        elif "code=1001" in lower:
+            counts["1001"] += 1
+        elif "code=1008" in lower:
+            counts["1008"] += 1
+        elif "code=1013" in lower:
+            counts["1013"] += 1
+    return counts
 
 
 def _books_after_reconnect(cycle: dict[str, Any]) -> bool:
@@ -352,6 +379,7 @@ def assess_cycles(
         "cycles_observed": len(observed),
         "cycles_required": cycles_required,
         "reconnect_count": len(reconnects),
+        "transport_errors": _transport_errors(log_text),
         "heartbeat_snapshots_supplied": (len(heartbeat_files) if heartbeat_files else 0),
         "per_cycle_heartbeat_snapshots": bool(heartbeat_files),
         "cycles": observed,

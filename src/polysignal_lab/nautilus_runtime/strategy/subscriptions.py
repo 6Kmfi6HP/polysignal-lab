@@ -78,6 +78,12 @@ _BOOK_GENERATION_ABANDON_SEC = 240.0
 # refresh if no qualifying book receipt arrived.
 _BOOK_RECOVERY_RETRY_SEC = 120.0
 
+# A once-READY condition with no recent book receipts is rebuilt proactively,
+# before the 300s liveness/data-starvation window can restart the container.
+# This closes the silent-WS-death gap where phase stays READY and neither the
+# awaiting nor stale-orderbook marker exists.
+_STALE_RECEIPT_THRESHOLD_SEC = 240.0
+
 # Phase 1 (drain) and Phase 2 (restore) of a real refresh must land in
 # different DataEngine command-queue turns. The engine forwards an unsubscribe
 # only while its book topic has zero subscribers, and the managed-book handler
@@ -201,6 +207,13 @@ class MarketSubscriptionState:
     # intentionally an unconfirmed intent marker, never a substitute for the
     # book receipt that drives READY.
     adapter_replay_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
+
+    # How many book-recovery batches have been dispatched for the current
+    # generation (bounded single-flight observability; never reset by retries
+    # within the same generation so the timeout detail can report attempts).
+    book_recovery_attempt_count_by_condition: dict[str, int] = field(
         default_factory=dict
     )
 
@@ -337,7 +350,14 @@ def _phase_from_derived_state(
 ) -> ConditionSubscriptionPhase:
     """Reconcile the phase with the derived bookkeeping it shadows."""
     state = strategy._subscription_state
-    if pending_condition_instrument_ids(strategy, condition_id):
+    pending = pending_condition_instrument_ids(strategy, condition_id)
+    instruments = condition_instruments(strategy, condition_id)
+    all_subscribed = all(
+        _instrument_key(instrument_id)
+        in state.subscribed_instrument_ids
+        for instrument_id in instruments
+    )
+    if pending and not all_subscribed:
         return ConditionSubscriptionPhase.PENDING_INSTRUMENT
     if condition_id in state.awaiting_book_sides_by_condition:
         return ConditionSubscriptionPhase.AWAITING_FIRST_BOOK
@@ -407,6 +427,35 @@ def _condition_ids_for_instrument(
                 matches.append(condition_id)
                 break
     return tuple(matches)
+
+
+def _instrument_restore_allowed(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+    *,
+    now: datetime,
+) -> bool:
+    """True only when every mapped condition is known and not expired.
+
+    Unknown instruments are never safely restorable: the payload may target a
+    resolved/closed market and trigger Polymarket code=1008, while this process
+    has no metadata to prove otherwise.
+    """
+    registry = strategy.registry
+    if registry is None:
+        return False
+    key = _instrument_key(instrument_id)
+    conditions = _condition_ids_for_instrument(strategy, key)
+    if not conditions:
+        return False
+    for condition_id in conditions:
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            return False
+        end_ts = getattr(pair, "end_ts", None)
+        if end_ts is not None and now >= end_ts:
+            return False
+    return True
 
 
 def _refresh_phase_for_instrument(
@@ -678,24 +727,55 @@ def subscribe_market_instrument(
     strategy: _SubscriptionStrategy,
     instrument_id: object,
 ) -> bool:
-    """Subscribe quotes/trades/book only after instrument is Cache-visible.
+    """Subscribe quotes/trades/book, dispatching the wire request even when the
+    instrument is not yet Cache-visible.
 
     Locked pyo3 Strategy API (nautilus_trader 1.231): subscribe_quotes /
     subscribe_trades / subscribe_book_deltas (not Cython long names).
+
+    issue69: after a window rotation the provider refresh never re-loads
+    new-slot instruments (update_instruments_interval relies on a connection
+    that still carries the resolved old slot), so gating the subscribe on
+    Cache visibility left the condition PENDING_METADATA forever and every
+    rotation ended in a watchdog data-starvation restart. The data client's
+    auto_load/resolve_poll paths only run when the wire request actually
+    reaches it, so the request is always dispatched; the key additionally
+    stays pending so on_instrument_available reconciles the phase once the
+    provider does load the instrument.
     """
     instrument_id = _nautilus_instrument_id(instrument_id)
     key = _instrument_key(instrument_id)
     state = strategy._subscription_state
     if key in state.subscribed_instrument_ids:  # pyright: ignore[reportPrivateUsage]
-        state.pending_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
+        state.pending_instrument_ids.discard(key)
         _refresh_phase_for_instrument(strategy, key)
         return True
     client_id = _client_id_for_instrument(strategy, instrument_id)
     if not instrument_visible_in_cache(strategy, instrument_id):
         state.pending_instrument_ids.add(key)
         _refresh_phase_for_instrument(strategy, key)
+    else:
+        state.pending_instrument_ids.discard(key)
+    try:
+        _dispatch_market_subscriptions(strategy, instrument_id, client_id)
+    except RuntimeError:
+        if not instrument_visible_in_cache(strategy, instrument_id):
+            state.pending_instrument_ids.add(key)
+            _refresh_phase_for_instrument(strategy, key)
         return False
-    state.pending_instrument_ids.discard(key)
+    # Metadata may still be pending while the wire request is live; keep this
+    # key pending for lookup/readiness, and mark subscribed because the engine
+    # request was accepted. on_instrument_available later clears the pending key.
+    state.subscribed_instrument_ids.add(key)
+    _refresh_phase_for_instrument(strategy, key)
+    return True
+
+
+def _dispatch_market_subscriptions(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+    client_id: object | None,
+) -> None:
     book_type = _nautilus_book_type(strategy.book_type)
     _ = strategy.subscribe_quotes(instrument_id, client_id=client_id)
     _ = strategy.subscribe_trades(instrument_id, client_id=client_id)
@@ -707,9 +787,6 @@ def subscribe_market_instrument(
         client_id=client_id,
         managed=True,
     )
-    state.subscribed_instrument_ids.add(key)
-    _refresh_phase_for_instrument(strategy, key)
-    return True
 
 
 def on_instrument_available(
@@ -720,7 +797,7 @@ def on_instrument_available(
     raw_id = getattr(instrument, "id", instrument)
     instrument_id = _nautilus_instrument_id(raw_id)
     key = _instrument_key(instrument_id)
-    strategy._subscription_state.pending_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
+    strategy._subscription_state.pending_instrument_ids.discard(key)
     if strategy.registry is None:
         return False
     wanted = {
@@ -778,7 +855,7 @@ def unsubscribe_market_conditions(
 
 
 def condition_instruments(
-    strategy: _SubscriptionStrategy,
+    strategy: _ConditionSubscriptionStateOwner,
     condition_id: str,
 ) -> tuple[object, ...]:
     if strategy.registry is None:
@@ -896,6 +973,7 @@ def begin_market_book_generation(
     # raise the validity clock.
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
     _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
+    _ = state.book_recovery_attempt_count_by_condition.pop(condition_id, None)
     # Drop prior receipts for sides this generation awaits so detail cannot
     # show "already received" while observe rejects received < started_at.
     _clear_awaiting_side_book_receipts(state, condition_id, awaiting)
@@ -1035,6 +1113,7 @@ def finish_market_book_generation(
     _ = state.adapter_replay_started_at_by_condition.pop(condition_id, None)
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
     _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
+    _ = state.book_recovery_attempt_count_by_condition.pop(condition_id, None)
     state.book_stalled_started_at_by_condition.pop(condition_id, None)
     state.first_bilateral_book_at_by_condition[condition_id] = ready_at
     # Remembers this active period reached READY so the stale-repair re-awaiting
@@ -1084,6 +1163,10 @@ def retire_market_book_generation(
         None,
     )
     _ = strategy._subscription_state.book_recovery_dispatched_at_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
+        condition_id,
+        None,
+    )
+    _ = strategy._subscription_state.book_recovery_attempt_count_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
         condition_id,
         None,
     )
@@ -1156,7 +1239,7 @@ def _no_book_abandoned_at(strategy: object) -> dict[str, datetime]:
     abandoned = getattr(strategy, "_no_book_abandoned_at_by_condition", None)
     if abandoned is None:
         return {}
-    return abandoned  # pyright: ignore[reportReturnType]
+    return abandoned
 
 
 def _subscribe_suppressed(strategy: object, condition_id: str, *, now: datetime) -> bool:
@@ -1236,7 +1319,10 @@ def abandon_book_stalled_condition(
     # tracking this condition (mirrors retire_expired_condition's ready=True).
     strategy._note_runtime_readiness(condition_id, ready=True)
     logger.info(
-        "condition_abandoned_no_book",
+        "condition_abandoned_no_book strategy=%s condition_id=%s stall_sec=%.3f",
+        getattr(strategy, "strategy_name", None),
+        condition_id,
+        stall_sec,
         extra={
             "condition_id": condition_id,
             "stall_sec": round(stall_sec, 3),
@@ -1406,6 +1492,49 @@ def _refresh_market_instrument(
     )
 
 
+def _restore_one_pending_instrument(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+    *,
+    now: datetime,
+) -> object | None:
+    """Restore one drained instrument; return the restored object or None.
+
+    Expired/closed conditions are skipped: re-subscribing a resolved market
+    makes Polymarket reject the payload with code=1008 (issue69 signal stall
+    defect 3), creating an infinite close→reconnect→resubscribe→1008 loop.
+
+    A failed restore still consumes the process-wide retry anchor
+    (single-flight): without it the very next heartbeat could re-drain the
+    same shared instrument, and with several strategies sharing one data
+    client the failure degenerates into a per-heartbeat drain/restore storm.
+    Spacing the next attempt by _BOOK_RECOVERY_RETRY_SEC bounds the loop
+    while keeping the failure retryable.
+    """
+    instrument_id = _nautilus_instrument_id(instrument_id)
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    if not _instrument_restore_allowed(strategy, instrument_id, now=now_utc):
+        return None
+    owners = _subscription_owners_for_instrument(strategy, instrument_id)
+    quote_owners = _quote_owners_for_instrument(instrument_id)
+    failures: list[Exception] = []
+    _restore_market_subscription_owners(owners, quote_owners, instrument_id, failures)
+    if failures:
+        logger.warning(
+            "book_recovery_restore_failed",
+            extra={
+                "instrument_id": _instrument_key(instrument_id),
+                "failure_count": len(failures),
+            },
+        )
+        _mark_global_book_refresh(strategy, instrument_id, now=now_utc)
+        return None
+    _mark_global_book_refresh(strategy, instrument_id, now=now_utc)
+    return instrument_id
+
+
 def _flush_pending_book_restores(
     strategy: _SubscriptionStrategy,
     *,
@@ -1414,10 +1543,10 @@ def _flush_pending_book_restores(
     """Phase 2: restore instruments drained by a previous event-loop turn.
 
     Runs from the evaluation heartbeat so the DataEngine command queue has
-    processed the delayed unsubscribe before the re-subscribe is enqueued. A
-    restore failure is logged and the instrument is left out of the global
-    refresh throttle, so the next recovery round can retry immediately instead
-    of waiting out the 240s gate.
+    processed the delayed unsubscribe before the re-subscribe is enqueued.
+    Skipped/failed restores still count as the instrument's retry anchor:
+    the next drain is spaced by _BOOK_RECOVERY_RETRY_SEC process-wide, so a
+    broken shared instrument is retried — never stormed every heartbeat.
     """
     now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
         UTC
@@ -1427,22 +1556,13 @@ def _flush_pending_book_restores(
         if (now_utc - promised_at).total_seconds() < _BOOK_RECOVERY_RESTORE_DELAY_SEC:
             continue
         _global_book_restore_pending.pop(key, None)
-        instrument_id = _nautilus_instrument_id(instrument_id)
-        owners = _subscription_owners_for_instrument(strategy, instrument_id)
-        quote_owners = _quote_owners_for_instrument(instrument_id)
-        failures: list[Exception] = []
-        _restore_market_subscription_owners(owners, quote_owners, instrument_id, failures)
-        if failures:
-            logger.warning(
-                "book_recovery_restore_failed",
-                extra={
-                    "instrument_id": _instrument_key(instrument_id),
-                    "failure_count": len(failures),
-                },
-            )
-            continue
-        _mark_global_book_refresh(strategy, instrument_id, now=now)
-        restored.append(instrument_id)
+        instrument_id = _restore_one_pending_instrument(
+            strategy,
+            instrument_id,
+            now=now_utc,
+        )
+        if instrument_id is not None:
+            restored.append(instrument_id)
     return tuple(restored)
 
 
@@ -1474,6 +1594,14 @@ def _mark_global_book_refresh(
     *,
     now: datetime,
 ) -> None:
+    """Record this instrument's last wire refresh attempt as the retry anchor.
+
+    Set on both successful restores and failed ones: the timestamp spaces the
+    next drain by ``_BOOK_RECOVERY_RETRY_SEC`` process-wide (the key is the
+    shared instrument, so every strategy sharing the client coalesces onto
+    the same throttle), which bounds a failure loop to one drain per retry
+    window instead of one per heartbeat.
+    """
     del strategy
     now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
         UTC
@@ -1510,6 +1638,9 @@ def _record_recovery_intent(
     state.book_recovery_dispatched_at_by_condition.setdefault(condition_id, {})[
         side
     ] = now.astimezone(UTC)
+    state.book_recovery_attempt_count_by_condition[condition_id] = (
+        state.book_recovery_attempt_count_by_condition.get(condition_id, 0) + 1
+    )
 
 
 def _dispatch_book_recovery(
@@ -1823,6 +1954,55 @@ def _stale_book_recovery_due(
     return now_utc, total_stalled_at
 
 
+def _stale_receipt_sides(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> tuple[Side, ...]:
+    """Return sides that stopped receiving after the READY condition existed."""
+    state = strategy._subscription_state
+    if condition_id not in strategy._active_condition_ids:
+        return ()
+    if condition_id not in state.first_bilateral_book_ever_at_by_condition:
+        return ()
+    if pending_condition_instrument_ids(strategy, condition_id):
+        return ()
+    if condition_id in state.awaiting_book_sides_by_condition:
+        return ()
+    if condition_id in strategy._stale_orderbook_recovery_by_condition:
+        return ()
+    receipts = state.last_book_received_at_by_condition.get(condition_id)
+    if not receipts:
+        return ()
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    stale = tuple(
+        side
+        for side in (Side.UP, Side.DOWN)
+        if side not in receipts
+        or (now_utc - receipts[side].astimezone(UTC)).total_seconds()
+        >= _STALE_RECEIPT_THRESHOLD_SEC
+    )
+    return stale
+
+
+def _ready_receipt_stalled(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    """True when a once-READY condition has stopped producing a side of books.
+
+    It does not require both sides to be stale: a unilateral feed loss can keep
+    one book fresh while the other side remains unavailable; that condition must
+    still enter recovery instead of staying READY forever.
+    """
+    return bool(_stale_receipt_sides(strategy, condition_id, now=now))
+
+
 def force_resubscribe_if_stale_orderbook(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -1862,3 +2042,87 @@ def force_resubscribe_if_stale_orderbook(
         dispatched=dispatched,
     )
     return True
+
+
+def _log_stale_receipt_refresh(
+    condition_id: str,
+    instruments: Sequence[object],
+    dispatched: Sequence[object],
+) -> None:
+    logger.info(
+        "book_stale_receipt_refresh_requested",
+        extra={
+            "condition_id": condition_id,
+            "instrument_count": len(instruments),
+            "dispatched_count": len(dispatched),
+        },
+    )
+
+
+def force_resubscribe_if_stale_receipt(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    """Repair a once-READY condition whose real receipts stopped (Gap C).
+
+    This is a maintenance retry, never a no-book abandon: the condition has
+    already proven it can receive a bilateral book, so a silent WS outage must
+    recover by draining and re-subscribing the current instruments.
+    """
+    state = strategy._subscription_state
+    if _subscribe_suppressed(strategy, condition_id, now=now):
+        return False
+    if not _ready_receipt_stalled(strategy, condition_id, now=now):
+        return False
+    generation_started_at = state.book_generation_started_at_by_condition.get(
+        condition_id
+    )
+    if generation_started_at is not None and (
+        now.astimezone(UTC) - generation_started_at
+    ).total_seconds() <= (_BOOK_GENERATION_STALL_SEC):
+        return False
+    # The late receipt path reuses the stale-orderbook repair transition. Seed
+    # only the sides that stopped receiving books; a healthy side must not be
+    # drained and resubscribed again.
+    stale_sides = _stale_receipt_sides(strategy, condition_id, now=now)
+    if not stale_sides:
+        return False
+    attempt = _stale_receipt_resubscribe(strategy, condition_id, stale_sides, now=now)
+    if attempt is None:
+        return False
+    instruments, dispatched = attempt
+    _log_book_refresh_requested(
+        state,
+        condition_id,
+        instruments,
+        stall_sec=_STALE_RECEIPT_THRESHOLD_SEC,
+        dispatched=dispatched,
+    )
+    _log_stale_receipt_refresh(condition_id, instruments, dispatched)
+    return True
+
+
+def _stale_receipt_resubscribe(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    stale_sides: Sequence[Side],
+    *,
+    now: datetime,
+) -> tuple[tuple[object, ...], tuple[object, ...]] | None:
+    """Open a stale-receipt repair generation and drain the stalled sides.
+
+    The marker is one-shot per stall episode, mirroring the stale-orderbook
+    repair: once the generation is (re)opened, drop it. Leaving it behind
+    would re-arm _stale_book_recovery_due ~120s after the book recovered and
+    re-drain a healthy READY condition forever (issue69 recovery storm).
+    """
+    strategy._stale_orderbook_recovery_by_condition[condition_id] = {
+        side: 0.0 for side in stale_sides
+    }
+    attempt = _resubscribe_and_begin_generation(strategy, condition_id, now=now)
+    if attempt is None:
+        return None
+    _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
+    return attempt
