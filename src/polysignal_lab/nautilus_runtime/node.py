@@ -49,7 +49,11 @@ from polysignal_lab.nautilus_runtime.observability import (
     bind_runtime_observability,
 )
 from polysignal_lab.nautilus_runtime.runtime_logging import configure_runtime_logging
-from polysignal_lab.observability.liveness_watchdog import LivenessWatchdog
+from polysignal_lab.observability.liveness_watchdog import (
+    HealthAlertDispatcher,
+    LivenessWatchdog,
+)
+from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
 from polysignal_lab.nautilus_runtime.signal_notifications import (
     _notify_accepted_signal,
@@ -61,26 +65,25 @@ UTC = timezone.utc
 logger = logging.getLogger(__name__)
 
 
-def _build_liveness_watchdog(
-    settings: Settings,
-    notifier: NautilusNotifierAdapter,
-) -> LivenessWatchdog:
-    """Wire alerting and supervised restart to the runtime watchdog."""
+def _build_liveness_watchdog(settings: Settings) -> LivenessWatchdog:
+    """Wire alerting and restart recovery to the runtime watchdog.
+
+    Health alerts travel through a dispatcher that owns both its delivery
+    thread and its asyncio loop: the watchdog poll never awaits Telegram, and
+    a send can never hit a closed application event loop (issue69 live failure
+    ``RuntimeError: Event loop is closed`` — the old closure cached one loop
+    and the runtime's shared httpx client). Each attempt gets a fresh
+    publisher, so no loop-bound client is ever reused.
+    """
     telegram = settings.telegram
     notify_enabled = telegram.enabled and telegram.send_health_alerts
-
-    # One long-lived loop for the watchdog thread, matching the notify outbox:
-    # the publisher's httpx client is shared with the startup and signal paths.
-    loop: list[asyncio.AbstractEventLoop] = []
-
-    def send(message: str) -> None:
-        if not notify_enabled:
-            return
-        if not loop:
-            loop.append(asyncio.new_event_loop())
-        _ = loop[0].run_until_complete(notifier.send(message, "health_alert"))
-
-    return LivenessWatchdog(settings, send)
+    if not notify_enabled:
+        return LivenessWatchdog(settings, lambda _message: None)
+    dispatcher = HealthAlertDispatcher(
+        settings,
+        publisher_factory=lambda: TelegramPublisher(settings.telegram),
+    )
+    return LivenessWatchdog(settings, dispatcher.submit, dispatcher=dispatcher)
 
 
 async def _prepare_nautilus_runtime_context(
@@ -92,7 +95,7 @@ async def _prepare_nautilus_runtime_context(
         health=context.health,
         store=NautilusEventStoreAdapter(context.persistence),
         notifier=notifier,
-        liveness_watchdog=_build_liveness_watchdog(settings, notifier),
+        liveness_watchdog=_build_liveness_watchdog(settings),
         accepted_signal_notifier=lambda signal, stake_usdc: _notify_accepted_signal(
             context,
             signal,
