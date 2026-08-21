@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -202,3 +203,34 @@ def test_readiness_callback_serializes_replay_marker(probe_env) -> None:
     stored_detail = detail_by_key["eth-5m"]
     assert isinstance(stored_detail, dict)
     assert isinstance(stored_detail["adapter_replay_started_at"], str)
+
+
+def test_heartbeat_write_carries_current_process_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """issue69: every app-side heartbeat write carries os.getpid() and the
+    entrypoint-assigned boot generation — the two fields the bash supervisor
+    matches before it may SIGKILL a process."""
+    monkeypatch.setenv("POLYSIGNAL_HEARTBEAT_BOOT_ID", "boot-test-1")
+    node_probes._reset_heartbeat_write_gates()
+    path = tmp_path / "runtime_heartbeat.json"
+    node_probes._write_runtime_heartbeat_best_effort(path, phase="starting")
+    payload = _read(path)
+    assert payload["pid"] == os.getpid()
+    assert payload["boot_id"] == "boot-test-1"
+    assert payload["phase"] == "starting"
+
+
+def test_heartbeat_write_outside_supervised_entrypoint_has_no_boot_id(
+    tmp_path: Path,
+) -> None:
+    """Without the entrypoint generation env (tests/local runs) the payload
+    records the pid but a null boot_id — never mistaken for current by the
+    supervisor."""
+    node_probes._reset_heartbeat_write_gates()
+    assert node_probes._current_process_boot_id() is None
+    path = tmp_path / "runtime_heartbeat.json"
+    node_probes._write_runtime_heartbeat_best_effort(path, phase="starting")
+    payload = _read(path)
+    assert payload["pid"] == os.getpid()
+    assert payload["boot_id"] is None

@@ -421,7 +421,7 @@ def test_once_ready_quiet_book_skips_trade_without_readiness_miss_or_wire_refres
         registry=_registered_catalog_for_view(quiet),
         policy=DecisionPolicy(gate=_gate()),
     )
-    now = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
+    now = T0
     begin_market_book_generation(strategy, quiet.condition_id, now=now)
     observe_market_book_side(
         strategy, quiet.condition_id, Side.UP, received_at=now, book_at=now
@@ -541,6 +541,64 @@ def test_once_ready_miss_still_trips_readiness_liveness(tmp_path: Path) -> None:
         max_age_sec=120,
         startup_started_at=T0 - timedelta(hours=1),
         startup_grace_sec=180,
+        max_readiness_miss_sec=READINESS_MISS_SEC,
+        max_data_starvation_sec=DATA_STARVATION_SEC,
+        now=observed,
+    )
+    assert result.ok is False
+    assert result.reason == "readiness_miss"
+
+
+def test_active_unsubscribed_condition_fails_after_startup_grace(
+    tmp_path: Path,
+) -> None:
+    """After startup grace, an active condition with no subscribe intent and
+    no first book must arm the readiness-miss clock (not stay warmup)."""
+    path = tmp_path / "hb.json"
+    detail: dict[str, object] = {
+        "condition_id": "btc-5m",
+        "subscription_state": "unsubscribed",
+        "subscribe_requested": False,
+        "first_bilateral_book_ever_at": None,
+        "awaiting_book_sides": [],
+        "last_book_at_by_side": {"UP": None, "DOWN": None},
+        "last_book_received_at_by_side": {"UP": None, "DOWN": None},
+    }
+    write_runtime_heartbeat(
+        path,
+        phase="readiness_ok",
+        readiness_key="flowing",
+        readiness_ok=True,
+        readiness_detail={
+            "subscription_state": "ready",
+            "first_bilateral_book_ever_at": T0.isoformat(),
+            "last_book_at_by_side": {"UP": T0.isoformat(), "DOWN": T0.isoformat()},
+        },
+        now=T0,
+    )
+    started = T0 + timedelta(seconds=1)
+    write_runtime_heartbeat(
+        path,
+        phase="readiness_miss",
+        readiness_key="btc-5m",
+        readiness_ok=False,
+        readiness_detail=detail,
+        now=started,
+    )
+    observed = started + timedelta(seconds=READINESS_MISS_SEC + 1)
+    write_runtime_heartbeat(
+        path,
+        phase="readiness_miss",
+        readiness_key="btc-5m",
+        readiness_ok=False,
+        readiness_detail=detail,
+        now=observed,
+    )
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=T0,
+        startup_grace_sec=1,
         max_readiness_miss_sec=READINESS_MISS_SEC,
         max_data_starvation_sec=DATA_STARVATION_SEC,
         now=observed,

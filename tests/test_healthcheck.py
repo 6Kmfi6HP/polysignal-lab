@@ -232,6 +232,45 @@ def test_liveness_fails_for_wrong_heartbeat_field_types(tmp_path, payload) -> No
     assert result.reason == "heartbeat_unreadable"
 
 
+def test_write_runtime_heartbeat_persists_process_identity(tmp_path) -> None:
+    """issue69: the writer must record its pid and the entrypoint boot
+    generation so the bash supervisor can attribute the heartbeat."""
+    path = tmp_path / "runtime_heartbeat.json"
+    written = write_runtime_heartbeat(
+        path, phase="running", now=_dt(0), pid=4242, boot_id="boot-7f3a91"
+    )
+    assert written.pid == 4242
+    assert written.boot_id == "boot-7f3a91"
+    read = read_runtime_heartbeat(path)
+    assert read.pid == 4242
+    assert read.boot_id == "boot-7f3a91"
+
+
+def test_read_runtime_heartbeat_tolerates_legacy_payload_without_identity(
+    tmp_path,
+) -> None:
+    """Pre-upgrade heartbeat files carry no pid/boot_id; readers must treat
+    them as foreign (None) instead of crashing."""
+    path = tmp_path / "runtime_heartbeat.json"
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": _dt(0).isoformat(),
+                "phase": "running",
+                "fatal": False,
+                "fatal_reason": None,
+                "last_data_at": None,
+                "readiness_miss_started_at_by_key": {},
+                "readiness_detail_by_key": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    heartbeat = read_runtime_heartbeat(path)
+    assert heartbeat.pid is None
+    assert heartbeat.boot_id is None
+
+
 def test_read_runtime_heartbeat_round_trips(tmp_path) -> None:
     path = tmp_path / "runtime_heartbeat.json"
     written = write_runtime_heartbeat(path, phase="running", now=_dt(0))
