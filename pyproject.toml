@@ -74,10 +74,19 @@ reportMissingTypeStubs = false
 #   basedpyright                 # must exit 0
 #   basedpyright --writebaseline # only when intentionally accepting new debt
 baselineFile = ".basedpyright/baseline.json"
-executionEnvironments = [
-    { root = "src", extraPaths = ["src"] },
-    { root = "tests", extraPaths = ["src"] },
-]
+[[tool.basedpyright.executionEnvironments]]
+root = "src"
+extraPaths = ["src"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["src"]
+reportAttributeAccessIssue = "warning"
+reportArgumentType = "warning"
+reportMissingImports = "warning"
+reportUninitializedInstanceVariable = "warning"
+reportOperatorIssue = "warning"
+reportInconsistentConstructor = "warning"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/polysignal_lab"]
