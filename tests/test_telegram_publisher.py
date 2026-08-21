@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, cast
 
 import httpx
-import pytest
 
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher

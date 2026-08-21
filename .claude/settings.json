@@ -26,6 +26,6 @@
     ]
   },
   "enabledPlugins": {
-    "codex@openai-codex": false
+    "codex@openai-codex": true
   }
 }
