@@ -466,6 +466,14 @@ def _polymarket_venue() -> object | None:
     return None if venue_cls is None else venue_cls.from_str("POLYMARKET")
 
 
+def _pending_instrument_count(strategy: _LifecycleStrategy) -> int:
+    """Count unresolved instruments across active conditions."""
+    return sum(
+        len(pending_condition_instrument_ids(strategy, condition_id))
+        for condition_id in strategy._active_condition_ids
+    )
+
+
 def _request_instrument_refresh(
     strategy: _LifecycleStrategy,
     *,
@@ -474,64 +482,71 @@ def _request_instrument_refresh(
     """Re-drive each due data client's instrument load for POLYMARKET.
 
     issue69: the adapter only loads startup ``load_ids``, so slot instruments
-    that rotate in later never load and their wire subscriptions never land —
-    the engine records them as dispatched while the runtime starves. Calling
-    ``request_instruments`` re-drives the adapter load path, firing
-    ``on_instrument`` for the new slot. The gate is bucketed per data client
-    (client_id == timeframe) so 5m and 15m never suppress each other and a
-    failed dispatch does not consume its bucket. Returns clients refreshed.
+    that rotate in later never load and their wire subscriptions never land.
+    The gate is bucketed per data client (client_id == timeframe) and a failed
+    dispatch does not consume its bucket. Returns clients refreshed.
     """
     request = getattr(strategy, "request_instruments", None)
     venue = _polymarket_venue()
     if not callable(request) or venue is None:
         return 0
     current = now if now is not None else framework_now(strategy)
-    refreshed = 0
-    for timeframe in getattr(strategy, "_subscription_timeframes", frozenset()):
-        client_id = polymarket_data_client_id(timeframe)
-        client_key = str(client_id)
-        last_refresh = _ADAPTER_REFRESH_AT_BY_CLIENT.get(client_key)
-        if (
-            last_refresh is not None
-            and current - last_refresh < _ADAPTER_REFRESH_INTERVAL
-        ):
-            continue
-        pending = sum(
-            len(pending_condition_instrument_ids(  # pyright: ignore[reportArgumentType]
-                strategy,
-                condition_id,
-            ))
-            for condition_id in strategy._active_condition_ids
+    return sum(
+        _refresh_due_instrument_client(
+            strategy,
+            venue,
+            timeframe=timeframe,
+            current=current,
         )
-        if not _refresh_venue_instrument_subscriptions(
-            strategy, venue, timeframe=timeframe, client_id=client_id
-        ):
-            logger.info(
-                "adapter_instrument_refresh_failed",
-                extra={
-                    "client_id": client_key,
-                    "timeframe": timeframe,
-                    "pending_instrument_count": pending,
-                    "last_request_at": (
-                        None
-                        if _ADAPTER_REFRESH_AT_BY_CLIENT.get(client_key) is None
-                        else _ADAPTER_REFRESH_AT_BY_CLIENT[client_key].isoformat()
-                    ),
-                },
-            )
-            continue
-        _ADAPTER_REFRESH_AT_BY_CLIENT[client_key] = current
-        strategy._last_adapter_refresh_at = current  # pyright: ignore[reportAttributeAccessIssue]
-        refreshed += 1
+        for timeframe in getattr(strategy, "_subscription_timeframes", frozenset())
+    )
+
+
+def _refresh_due_instrument_client(
+    strategy: _LifecycleStrategy,
+    venue: object,
+    *,
+    timeframe: str,
+    current: datetime,
+) -> bool:
+    """Refresh one client when its per-client throttle allows."""
+    client_id = polymarket_data_client_id(timeframe)
+    client_key = str(client_id)
+    last_refresh = _ADAPTER_REFRESH_AT_BY_CLIENT.get(client_key)
+    if (
+        last_refresh is not None
+        and current - last_refresh < _ADAPTER_REFRESH_INTERVAL
+    ):
+        return False
+    pending = _pending_instrument_count(strategy)
+    if not _refresh_venue_instrument_subscriptions(
+        strategy, venue, timeframe=timeframe, client_id=client_id
+    ):
         logger.info(
-            "adapter_instrument_refresh_requested",
+            "adapter_instrument_refresh_failed",
             extra={
                 "client_id": client_key,
                 "timeframe": timeframe,
                 "pending_instrument_count": pending,
+                "last_request_at": (
+                    None
+                    if _ADAPTER_REFRESH_AT_BY_CLIENT.get(client_key) is None
+                    else _ADAPTER_REFRESH_AT_BY_CLIENT[client_key].isoformat()
+                ),
             },
         )
-    return refreshed
+        return False
+    _ADAPTER_REFRESH_AT_BY_CLIENT[client_key] = current
+    strategy._last_adapter_refresh_at = current  # pyright: ignore[reportAttributeAccessIssue]
+    logger.info(
+        "adapter_instrument_refresh_requested",
+        extra={
+            "client_id": client_key,
+            "timeframe": timeframe,
+            "pending_instrument_count": pending,
+        },
+    )
+    return True
 
 
 def _refresh_venue_instrument_subscriptions(
@@ -616,12 +631,32 @@ def _discover_and_subscribe_new_markets(
         )
         return
     if not new_conditions:
-        logger.info(
-            "market_discovery_empty",
-            extra={"strategy": getattr(strategy, "strategy_name", None)},
-        )
+        _log_market_discovery_empty(strategy)
         return
     attached = _attach_discovered_conditions(strategy, new_conditions, now=now)
+    _log_market_discovery_run(
+        strategy,
+        attached,
+        new_conditions,
+        assets,
+        timeframes,
+    )
+
+
+def _log_market_discovery_empty(strategy: _LifecycleStrategy) -> None:
+    logger.info(
+        "market_discovery_empty",
+        extra={"strategy": getattr(strategy, "strategy_name", None)},
+    )
+
+
+def _log_market_discovery_run(
+    strategy: _LifecycleStrategy,
+    attached: int,
+    new_conditions: Sequence[str],
+    assets: frozenset[str],
+    timeframes: frozenset[str],
+) -> None:
     logger.info(
         "market_discovery_run strategy=%s new=%d candidates=%d conditions=%s assets=%s tfs=%s",
         getattr(strategy, "strategy_name", None),
@@ -677,15 +712,22 @@ def _attach_discovered_conditions(
         # data client per window.
         _request_instrument_refresh(strategy)
     if suppressed:
-        logger.info(
-            "discovery_attach_suppressed",
-            extra={
-                "strategy": getattr(strategy, "strategy_name", None),
-                "suppressed_count": len(suppressed),
-                "condition_ids": list(suppressed),
-            },
-        )
+        _log_attach_suppressed(strategy, suppressed)
     return len(subscribe_conditions)
+
+
+def _log_attach_suppressed(
+    strategy: _LifecycleStrategy,
+    suppressed: tuple[str, ...],
+) -> None:
+    logger.info(
+        "discovery_attach_suppressed",
+        extra={
+            "strategy": getattr(strategy, "strategy_name", None),
+            "suppressed_count": len(suppressed),
+            "condition_ids": list(suppressed),
+        },
+    )
 
 
 def _data_stall_refresh_due(strategy: _LifecycleStrategy, *, now: datetime) -> bool:

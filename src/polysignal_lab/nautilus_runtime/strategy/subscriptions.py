@@ -1140,6 +1140,15 @@ def market_book_generation_ready(
     return condition_phase(strategy, condition_id) is ConditionSubscriptionPhase.READY
 
 
+def _clear_recovery_generation_markers(
+    state: MarketSubscriptionState,
+    condition_id: str,
+) -> None:
+    _ = state.adapter_replay_started_at_by_condition.pop(condition_id, None)
+    _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
+    _ = state.book_recovery_attempt_count_by_condition.pop(condition_id, None)
+
+
 def retire_market_book_generation(
     strategy: _SubscriptionStateOwner,
     condition_id: str,
@@ -1154,22 +1163,11 @@ def retire_market_book_generation(
         condition_id,
         None,
     )
-    _ = strategy._subscription_state.adapter_replay_started_at_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
-        condition_id,
-        None,
-    )
     strategy._subscription_state.pending_book_recovery_sides_by_condition.pop(
         condition_id,
         None,
     )
-    _ = strategy._subscription_state.book_recovery_dispatched_at_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
-        condition_id,
-        None,
-    )
-    _ = strategy._subscription_state.book_recovery_attempt_count_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
-        condition_id,
-        None,
-    )
+    _clear_recovery_generation_markers(strategy._subscription_state, condition_id)
     strategy._subscription_state.book_stalled_started_at_by_condition.pop(
         condition_id,
         None,
@@ -1306,7 +1304,6 @@ def abandon_book_stalled_condition(
         return False
     instruments = condition_instruments(strategy, condition_id)
     strategy._active_condition_ids.discard(condition_id)
-    # Suppress universe re-entry and drop pending Phase-2 restores.
     _mark_no_book_abandoned(strategy, condition_id, instruments, now=now)
     for instrument_id in instruments:
         _ = unsubscribe_market_instrument(strategy, instrument_id)

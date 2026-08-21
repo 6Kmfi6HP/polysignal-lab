@@ -392,10 +392,7 @@ def readiness_detail(
             pair is not None and pair.start_ts is not None and now < pair.start_ts
         ),
     )
-    recovery_in_flight = bool(
-        state.adapter_replay_started_at_by_condition.get(condition_id) is not None
-        or condition_id in strategy._stale_orderbook_recovery_by_condition
-    )
+    recovery_in_flight = _readiness_recovery_in_flight(strategy, condition_id, state)
     return {
         "condition_id": condition_id,
         "market_id": None if pair is None else pair.market_id,
@@ -417,6 +414,17 @@ def readiness_detail(
         "max_freshness_ms": max_freshness_ms,
         **_adapter_replay_detail(state, condition_id),
     }
+
+
+def _readiness_recovery_in_flight(
+    strategy: _ReadinessStrategy,
+    condition_id: str,
+    state: MarketSubscriptionState,
+) -> bool:
+    return bool(
+        state.adapter_replay_started_at_by_condition.get(condition_id) is not None
+        or condition_id in strategy._stale_orderbook_recovery_by_condition
+    )
 
 
 def stale_orderbook_recovered(
