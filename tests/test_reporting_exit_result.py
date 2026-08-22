@@ -9,6 +9,7 @@ from polysignal_lab.reporting.exit_result import (
     FEE_MODEL_IGNORED_V1,
     fee_fields_v1,
     report_result_from_early_exit,
+    report_result_from_resolution,
 )
 
 
@@ -149,6 +150,106 @@ def test_early_exit_stop_loss_builds_loss_result() -> None:
     assert result["pnl_usdc"] < 0.0
     assert result["strategy"] == "late_consensus"
 
+
+def test_resolution_result_win_builds_report_only_row() -> None:
+    result = report_result_from_resolution(
+        {
+            "position_id": "position-res-win",
+            "signal_id": "sig-res-win",
+            "entry_price": 0.40,
+            "position_quantity": 10.0,
+            "stake_usdc": 4.0,
+            "side": "UP",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "market_id": "mkt-1",
+            "market_slug": "btc-updown-5m",
+            "opened_at": "2026-07-06T12:00:00+00:00",
+        },
+        outcome_value=1.0,
+        strategy_name="ptb_diff",
+        closed_at="2026-07-06T12:05:00+00:00",
+    )
+    assert result is not None
+    assert result["exit_mode"] == "RESOLUTION"
+    assert result["result"] == "WIN"
+    assert result["shares"] == 10.0
+    assert result["settlement_value"] == 10.0
+    assert abs(result["pnl_usdc"] - 6.0) < 1e-12
+    assert result["details"]["native_settlement_mode"] == "report_only"
+    assert result["details"]["native_position_mutation"] == "none"
+
+
+def test_resolution_result_loss_builds_zero_settlement() -> None:
+    result = report_result_from_resolution(
+        {
+            "position_id": "position-res-loss",
+            "entry_price": 0.50,
+            "position_quantity": 20.0,
+            "stake_usdc": 10.0,
+            "side": "DOWN",
+            "asset": "ETH",
+            "timeframe": "15m",
+            "market_id": "mkt-2",
+            "market_slug": "eth-updown-15m",
+        },
+        outcome_value=0.0,
+        strategy_name="late_consensus",
+    )
+    assert result is not None
+    assert result["exit_mode"] == "RESOLUTION"
+    assert result["result"] == "LOSS"
+    assert result["shares"] == 20.0
+    assert result["settlement_value"] == 0.0
+    assert result["pnl_usdc"] == -10.0
+
+
+def test_resolution_result_is_deterministically_idempotent() -> None:
+    metrics = {
+        "position_id": "position-res-idem",
+        "entry_price": 0.40,
+        "position_quantity": 10.0,
+        "stake_usdc": 4.0,
+        "side": "UP",
+        "asset": "BTC",
+        "timeframe": "5m",
+        "market_id": "mkt-1",
+        "market_slug": "btc-updown-5m",
+    }
+    first = report_result_from_resolution(
+        metrics,
+        outcome_value=1.0,
+        strategy_name="ptb_diff",
+    )
+    second = report_result_from_resolution(
+        metrics,
+        outcome_value=1.0,
+        strategy_name="ptb_diff",
+    )
+    assert first is not None
+    assert second is not None
+    assert first["report_result_id"] == second["report_result_id"]
+    assert first["report_result_id"].startswith("rr_res_")
+
+
+def test_resolution_result_rejects_out_of_range_outcome() -> None:
+    assert (
+        report_result_from_resolution(
+            {
+                "position_id": "position-res-bad-outcome",
+                "entry_price": 0.40,
+                "position_quantity": 10.0,
+                "side": "UP",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "market_id": "mkt-1",
+                "market_slug": "btc-updown-5m",
+            },
+            outcome_value=1.01,
+            strategy_name="ptb_diff",
+        )
+        is None
+    )
 
 def test_early_exit_ignores_non_exit_fills() -> None:
     assert (

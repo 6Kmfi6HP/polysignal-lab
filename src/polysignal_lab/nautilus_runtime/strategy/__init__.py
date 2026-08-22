@@ -35,10 +35,11 @@ __all__ = [
 def __getattr__(name: str) -> object:
     """Lazily re-export PolySignalNativeStrategy to break circular import."""
     if name == "PolySignalNativeStrategy":
-        from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: PLC0415
-            PolySignalNativeStrategy,
-        )
+        import importlib as _importlib
 
-        return PolySignalNativeStrategy
+        module = _importlib.import_module(
+            "polysignal_lab.nautilus_runtime.native_strategy"
+        )
+        return getattr(module, name)
     msg = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(msg)
