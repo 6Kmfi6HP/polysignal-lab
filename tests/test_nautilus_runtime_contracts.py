@@ -2,8 +2,6 @@ from __future__ import annotations
 
 # ruff: noqa: E402
 
-import json
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -40,10 +38,7 @@ from polysignal_lab.nautilus_runtime.live_node import (
 def test_nautilus_version_has_native_strategy_messaging() -> None:
     from importlib.metadata import version
 
-    manifest = json.loads(
-        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
-    )
-    assert version("nautilus-trader") == manifest["version"]
+    assert version("nautilus-trader").startswith("2.0.0rc")
     assert callable(getattr(pyo3.Strategy, "publish_data", None))
     assert callable(getattr(pyo3.Strategy, "subscribe_data", None))
 

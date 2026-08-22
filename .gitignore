@@ -42,3 +42,4 @@ archive/
 # Local nautilus wheels are build inputs only (do not commit).
 wheels/
 reports/
+/uv.lock

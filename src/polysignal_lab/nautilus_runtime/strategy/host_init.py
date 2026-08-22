@@ -283,6 +283,7 @@ def _bind_pipeline(
             ),
         ),
         telemetry=NativeDecisionTelemetry(strategy),
+        now=strategy._framework_now,
     )
     strategy._decision_pipeline = pipeline
     strategy.rejected_decisions = pipeline.rejected_decisions

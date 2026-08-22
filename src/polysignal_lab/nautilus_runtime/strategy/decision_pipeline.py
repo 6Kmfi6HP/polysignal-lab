@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.native_order import (
 )
 from polysignal_lab.nautilus_runtime.optional_imports import load_nautilus_module
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+from polysignal_lab.utils import utc_now
 
 _pyo3 = load_nautilus_module("nautilus_trader.core.nautilus_pyo3")
 AccountId = _pyo3.AccountId
@@ -358,6 +359,7 @@ class DecisionPipeline:
     policy: DecisionPolicyPort
     submitter: OrderSubmitter
     telemetry: DecisionTelemetry
+    now: Callable[[], datetime] | None = None
     rejected_decisions: deque[RejectedDecision] = field(
         default_factory=lambda: deque(maxlen=1000)
     )
@@ -418,6 +420,9 @@ class DecisionPipeline:
                 ),
                 decision,
             )
+        expired = self._expired_entry_rejection(approved, view)
+        if expired is not None:
+            return self._reject(expired, decision)
         try:
             order = self.submitter.submit(approved, view)
         except _CashPreflightRejection as rejection:
@@ -427,6 +432,36 @@ class DecisionPipeline:
         active_dedupe_keys.add(dedupe_key)
         self.telemetry.accepted(approved, order)
         return SubmittedDecision(approved=approved, order=order)
+
+    def _expired_entry_rejection(
+        self,
+        approved: ApprovedDecision,
+        view: MarketView,
+    ) -> RejectedDecision | None:
+        if approved.decision.reduce_only:
+            return None
+        end_ts = getattr(view, "end_ts", None)
+        if end_ts is None:
+            return None
+        current = self.now() if self.now is not None else self._view_now(view)
+        if current < end_ts:
+            return None
+        return RejectedDecision(
+            reason_code="EXPIRED_MARKET",
+            detail={
+                "end_ts": end_ts.isoformat(),
+                "now": current.isoformat(),
+                "reason": "market reached end_ts; entry is fail-closed",
+            },
+            decision=approved.decision,
+            publish=approved.publish,
+        )
+
+    def _view_now(self, view: MarketView) -> datetime:
+        created_at = getattr(view, "created_at", None)
+        if isinstance(created_at, datetime):
+            return created_at
+        return utc_now()
 
     def _reject(
         self, rejected: RejectedDecision, decision: AlphaDecision

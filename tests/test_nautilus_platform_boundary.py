@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import importlib
-import json
 import re
 import subprocess
 import sys
@@ -39,30 +38,19 @@ def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
 
 def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    manifest = json.loads(
-        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
-    )
 
     dependencies = cast(list[str], data["project"]["dependencies"])
-    expected = next(
-        dependency
-        for dependency in dependencies
-        if dependency.startswith("nautilus_trader[polymarket] @ ")
-    )
-    assert f"#sha256={manifest['wheel_sha256']}" in expected
+    expected = "nautilus-trader>=2.0.0rc3.dev0"
+    assert expected in dependencies
     nautilus_extra = cast(
         list[str], data["project"]["optional-dependencies"]["nautilus"]
     )
-
-    assert nautilus_extra == [
-        expected,
-    ]
+    assert nautilus_extra == [expected]
     assert data["project"]["requires-python"] == ">=3.12,<3.13"
 
 
-def test_nautilus_dependency_avoids_ephemeral_develop_wheel() -> None:
+def test_nautilus_dependency_uses_floating_spec_not_fixed_wheel() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
     project = data["project"]
     dependencies = cast(list[str], project["dependencies"])
     nautilus_extra = cast(list[str], project["optional-dependencies"]["nautilus"])
@@ -70,36 +58,18 @@ def test_nautilus_dependency_avoids_ephemeral_develop_wheel() -> None:
     nautilus_dependencies = [
         dependency
         for dependency in [*dependencies, *nautilus_extra]
-        if dependency.startswith("nautilus_trader[")
+        if dependency.startswith("nautilus-trader")
     ]
-    nautilus_packages = [
-        package for package in lock["package"] if package["name"] == "nautilus-trader"
-    ]
-
-    # The wheel must be pin-fixed (URL + sha256, never a floating index
-    # reference), and the pin must match the verified manifest. Dev/nightly
-    # versions are acceptable when deliberately verified (issue69 heartbeat
-    # fix only exists in 2.0.0rc3.dev builds) — what is forbidden is an
-    # unpinned ephemeral wheel.
-    manifest = json.loads(
-        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
-    )
     assert len(nautilus_dependencies) == 2
-    assert all("#sha256=" in dependency for dependency in nautilus_dependencies)
-    assert all(f"#sha256={manifest['wheel_sha256']}" in dependency for dependency in nautilus_dependencies)
-    assert len(nautilus_packages) == 1
-    assert nautilus_packages[0]["version"] == manifest["version"]
+    assert all("#sha256=" not in dependency for dependency in nautilus_dependencies)
+    assert all(".whl" not in dependency for dependency in nautilus_dependencies)
+    expected = "nautilus-trader>=2.0.0rc3.dev0"
+    assert all(dependency == expected for dependency in nautilus_dependencies)
 
 
-def test_nautilus_docker_and_lock_avoid_git_source_builds() -> None:
+def test_dockerfile_avoids_git_source_builds() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
-    lock_text = Path("uv.lock").read_text(encoding="utf-8")
-
     assert "git+https://github.com/nautechsystems/nautilus_trader" not in dockerfile
-    assert (
-        'source = { git = "https://github.com/nautechsystems/nautilus_trader'
-        not in lock_text
-    )
 
 
 def test_cli_exposes_nautilus_mode_and_script() -> None:
