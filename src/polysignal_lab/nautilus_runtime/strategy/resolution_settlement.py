@@ -223,7 +223,11 @@ def _collect_open_candidates(
             if candidate is not None:
                 by_key[(candidate.strategy, candidate.report_position_id)] = candidate
     for row in _persistent_open_position_rows(strategy):
-        candidate = _candidate_from_report_position(row, strategy.strategy_name)
+        candidate = _candidate_from_report_position(
+            row,
+            strategy.strategy_name,
+            registry=registry,
+        )
         if candidate is not None:
             key = (candidate.strategy, candidate.report_position_id)
             by_key.setdefault(key, candidate)
@@ -385,19 +389,30 @@ def _candidate_from_cache_position(
 def _candidate_from_report_position(
     row: Mapping[str, object],
     strategy_name: str,
+    *,
+    registry: MarketCatalog | None = None,
 ) -> ResolutionCandidate | None:
     identity = _report_position_identity(row)
     if identity is None:
         return None
     report_position_id, position_id, instrument_id, condition_id, token_id = identity
+    pair = registry.by_condition(condition_id) if registry is not None else None
+
     side = _row_text(row, "side").upper()
+    if side not in {"UP", "DOWN"} and pair is not None:
+        if token_id == str(pair.up.token_id):
+            side = Side.UP.value
+        elif token_id == str(pair.down.token_id):
+            side = Side.DOWN.value
     if side not in {"UP", "DOWN"}:
         return None
+
     pricing = _report_position_pricing(row)
     if pricing is None:
         return None
     entry_price, shares, stake = pricing
-    metadata = _report_position_metadata(row, strategy_name)
+
+    metadata = _report_position_metadata(row, strategy_name, pair=pair)
     if metadata is None:
         return None
     strategy, market_id, market_slug, asset, timeframe, opened_at = metadata
@@ -455,12 +470,22 @@ def _report_position_pricing(
 def _report_position_metadata(
     row: Mapping[str, object],
     strategy_name: str,
+    *,
+    pair: MarketPairMeta | None = None,
 ) -> tuple[str, str, str, str, str, str] | None:
     strategy = _row_text(row, "strategy", "owning_strategy") or strategy_name
-    market_id = _row_text(row, "market_id")
-    market_slug = _row_text(row, "market_slug")
-    asset = _row_text(row, "asset").upper()
-    timeframe = _row_text(row, "timeframe").lower()
+    market_id = _row_text(row, "market_id") or (
+        pair.market_id if pair is not None else ""
+    )
+    market_slug = _row_text(row, "market_slug") or (
+        pair.market_slug if pair is not None else ""
+    )
+    asset = _row_text(row, "asset").upper() or (
+        pair.asset if pair is not None else ""
+    )
+    timeframe = _row_text(row, "timeframe").lower() or (
+        pair.timeframe if pair is not None else ""
+    )
     if not (strategy and market_id and market_slug and asset and timeframe):
         return None
     opened_at = _row_text(row, "opened_at", "ts", "created_at")
