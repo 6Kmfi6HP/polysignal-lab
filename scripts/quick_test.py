@@ -1,6 +1,5 @@
 import asyncio
 import httpx
-import json
 
 
 async def test_gamma_api():
