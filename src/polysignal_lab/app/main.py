@@ -117,6 +117,7 @@ def run_dashboard_cli(settings: Settings) -> None:
         settings.storage.sqlite_path,
         connect_retries=10,
         retry_delay_sec=0.2,
+        read_only=settings.dashboard.read_only,
     )
     runtime_health = FileRuntimeHealthReader(
         Path(settings.storage.state_dir) / "runtime_heartbeat.json",

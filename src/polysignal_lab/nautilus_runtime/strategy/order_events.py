@@ -115,6 +115,15 @@ def handle_order_lifecycle_event(
     strategy._record_nautilus_order(event, metrics)
 
 
+def _resolution_settlement_fill(metrics: Mapping[str, object]) -> bool:
+    token = metrics.get("resolution_settlement_close")
+    return isinstance(token, bool) and token or str(token or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
     strategy._note_runtime_progress("order_event")
     order, resolved = _association_order(strategy, event)
@@ -141,6 +150,9 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
             shares = float(cast(float, metrics["shares"]))
             _ = notify(str(metrics.get("market_id") or ""), side, shares)
     strategy._record_nautilus_fill(event, metrics)
+    if _resolution_settlement_fill(metrics):
+        strategy._note_runtime_progress("resolution_native_close_fill")
+        return
     if bool(metrics.get("reduce_only")):
         _record_completed_early_exit(strategy, metrics)
         return

@@ -223,6 +223,12 @@ class PolySignalNativeStrategy(Strategy):
         """Subscribe only when Actor-owned metadata marks the instrument wanted."""
         _ = subs.on_instrument_available(self, instrument)
 
+    def on_instrument_close(self, close: object) -> None:
+        """Settle report-only RESOLUTION from official Nautilus close events."""
+        from polysignal_lab.nautilus_runtime.strategy import resolution_settlement
+
+        resolution_settlement.handle_instrument_close(self, close)
+
     def on_quote(self, tick: object) -> None:
         mde.evaluate_order_book_event(self, tick)
 

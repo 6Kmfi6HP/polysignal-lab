@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 
@@ -202,6 +203,55 @@ def test_apply_converts_submit_mapping_failure_to_rejection() -> None:
     assert results[0].reason_code == "ORDER_MAPPING_FAILED"
     assert results[0].detail == {"error": "unmapped token"}
     assert telemetry.rejected_calls[0][1] is decision
+
+
+def test_expired_market_rejects_entry_before_submit() -> None:
+    decision = _decision_with_intent()
+    view = sample_market_view(seconds_to_close=-60)
+    approved = ApprovedDecision(
+        decision=decision,
+        publish=candidate_from_decision(decision, view),
+    )
+    submitter = _Submitter()
+    telemetry = _Telemetry()
+    pipeline = DecisionPipeline(
+        policy=_Policy(approvals={id(decision): approved}),
+        submitter=submitter,
+        telemetry=telemetry,
+        now=lambda: datetime.now(UTC),
+    )
+
+    results = pipeline.apply((decision,), view)
+
+    assert isinstance(results[0], RejectedDecision)
+    assert results[0].reason_code == "EXPIRED_MARKET"
+    assert submitter.submitted == []
+    assert telemetry.accepted_calls == []
+    assert len(telemetry.rejected_calls) == 1
+
+
+def test_expired_market_allows_reduce_only_close() -> None:
+    decision = _decision_with_intent(reduce_only=True, quantity=2.0)
+    view = sample_market_view(seconds_to_close=-60)
+    approved = ApprovedDecision(
+        decision=decision,
+        publish=candidate_from_decision(decision, view),
+    )
+    submitter = _Submitter()
+    telemetry = _Telemetry()
+    pipeline = DecisionPipeline(
+        policy=_Policy(approvals={id(decision): approved}),
+        submitter=submitter,
+        telemetry=telemetry,
+        now=lambda: datetime.now(UTC),
+    )
+
+    results = pipeline.apply((decision,), view)
+
+    assert isinstance(results[0], SubmittedDecision)
+    assert len(submitter.submitted) == 1
+    assert len(telemetry.accepted_calls) == 1
+    assert telemetry.rejected_calls == []
 
 
 def test_apply_bounds_rejected_history() -> None:

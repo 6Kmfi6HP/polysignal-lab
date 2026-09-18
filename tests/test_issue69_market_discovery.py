@@ -18,12 +18,11 @@ from typing import Any, cast
 import pytest
 
 from polysignal_lab.nautilus_runtime.strategy import lifecycle as life
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import MarketStatus, Side
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     ConditionSubscriptionPhase,
     MarketSubscriptionState,
     _NO_BOOK_SUPPRESS_SEC,
-    _subscribe_suppressed,
 )
 
 
@@ -90,10 +89,19 @@ class _FakeRegistry:
 
 
 class _FakeMarket:
-    def __init__(self, condition_id: str, asset: str, timeframe: str) -> None:
+    def __init__(
+        self,
+        condition_id: str,
+        asset: str,
+        timeframe: str,
+        status: MarketStatus = MarketStatus.ACTIVE,
+        resolved_outcome: Side | None = None,
+    ) -> None:
         self.condition_id = condition_id
         self.asset = asset
         self.timeframe = timeframe
+        self.status = status
+        self.resolved_outcome = resolved_outcome
 
 
 def test_discovery_skips_without_optin_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,8 +143,11 @@ def test_discovery_subscribes_new_conditions(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("POLYSIGNAL_MARKET_DISCOVERY", "1")
     monkeypatch.setattr(
         life,
-        "_discover_new_conditions",
-        lambda registry, assets, timeframes: ["cond-1", "cond-2"],
+        "_discover_in_scope_markets",
+        lambda registry, assets, timeframes: [
+            _FakeMarket("cond-1", "BTC", "5m"),
+            _FakeMarket("cond-2", "BTC", "5m"),
+        ],
     )
     strategy = _DiscoveryStrategy()
     strategy.registry = _FakeRegistry()
@@ -157,7 +168,7 @@ def test_discovery_no_refresh_without_new_conditions(
     monkeypatch.setenv("POLYSIGNAL_MARKET_DISCOVERY", "1")
     monkeypatch.setattr(
         life,
-        "_discover_new_conditions",
+        "_discover_in_scope_markets",
         lambda registry, assets, timeframes: [],
     )
     strategy = _DiscoveryStrategy()
@@ -178,8 +189,8 @@ def test_data_stall_refresh_drives_adapter_load(
     monkeypatch.setenv("POLYSIGNAL_MARKET_DISCOVERY", "1")
     monkeypatch.setattr(
         life,
-        "_discover_new_conditions",
-        lambda registry, assets, timeframes: ["cond-1"],
+        "_discover_in_scope_markets",
+        lambda registry, assets, timeframes: [_FakeMarket("cond-1", "BTC", "5m")],
     )
     strategy = _DiscoveryStrategy()
     strategy.registry = _FakeRegistry()
@@ -262,7 +273,7 @@ def test_discovery_throttles_to_interval(monkeypatch: pytest.MonkeyPatch) -> Non
     calls: list[int] = []
     monkeypatch.setattr(
         life,
-        "_discover_new_conditions",
+        "_discover_in_scope_markets",
         lambda registry, assets, timeframes: calls.append(1) or [],
     )
     strategy = _DiscoveryStrategy()
@@ -422,7 +433,7 @@ def test_discovery_does_not_reattach_known_active_condition(
     monkeypatch.setenv("POLYSIGNAL_MARKET_DISCOVERY", "1")
     monkeypatch.setattr(
         life,
-        "_discover_new_conditions",
+        "_discover_in_scope_markets",
         lambda registry, assets, timeframes: [],
     )
     strategy = _DiscoveryStrategy()
@@ -704,8 +715,11 @@ def test_discovery_attach_skips_suppression_via_heartbeat(
     monkeypatch.setenv("POLYSIGNAL_MARKET_DISCOVERY", "1")
     monkeypatch.setattr(
         life,
-        "_discover_new_conditions",
-        lambda registry, assets, timeframes: ["cond-suppressed", "cond-fresh"],
+        "_discover_in_scope_markets",
+        lambda registry, assets, timeframes: [
+            _FakeMarket("cond-suppressed", "BTC", "5m"),
+            _FakeMarket("cond-fresh", "BTC", "5m"),
+        ],
     )
     strategy = _DiscoveryStrategy()
     strategy.registry = _FakeRegistry()
@@ -769,7 +783,7 @@ def test_discovery_error_is_warning_not_debug(
         calls.append(1)
         raise RuntimeError("gamma down")
 
-    monkeypatch.setattr(life, "_discover_new_conditions", boom)
+    monkeypatch.setattr(life, "_discover_in_scope_markets", boom)
     strategy = _DiscoveryStrategy()
     strategy.registry = _FakeRegistry()
 

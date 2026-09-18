@@ -5,7 +5,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from polysignal_lab.alpha.types import (
     AlphaCore,
@@ -104,6 +104,7 @@ def retire_expired_condition(
     if end_ts is None or now < end_ts:
         return False
     strategy._active_condition_ids.discard(condition_id)
+    _cancel_expired_entry_orders(strategy, condition_id, registry=registry)
     if strategy.unsubscribe_exited:
         clear_condition_lifecycle_state(
             strategy,  # type: ignore[arg-type]
@@ -120,7 +121,51 @@ def retire_expired_condition(
         strategy._unsubscribe_market_conditions((condition_id,))
     strategy._refresh_asset_conditions()
     strategy._note_runtime_readiness(condition_id, ready=True)
+    # Settlement must run even when discovery would otherwise be throttled or
+    # when this condition just left the active set.
+    from polysignal_lab.nautilus_runtime.strategy import resolution_settlement
+
+    resolution_settlement.resolve_open_positions(
+        cast(Any, strategy),
+        now=now,
+    )
     return True
+
+
+def _cancel_expired_entry_orders(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    *,
+    registry: MarketCatalog | None,
+) -> None:
+    if registry is None or getattr(strategy, "cache", None) is None:
+        return
+    try:
+        trading = trading_state_from_cache(
+            getattr(strategy, "cache", None),
+            strategy_id=getattr(strategy, "strategy_id", None)
+            or getattr(strategy, "id", None),
+            registry=registry,
+            condition_id=condition_id,
+        )
+    except (TypeError, ValueError, RuntimeError):
+        return
+    cancel = getattr(strategy, "cancel_" + "orders", None)
+    if not callable(cancel):
+        strategy._note_runtime_progress("expired_order_cancel_unavailable")
+        return
+    client_order_ids = tuple(
+        order.client_order_id
+        for order in trading.orders
+        if not order.reduce_only and (order.is_open or order.is_inflight)
+    )
+    if not client_order_ids:
+        return
+    try:
+        cancel(client_order_ids)
+        strategy._note_runtime_progress("expired_entry_orders_cancelled")
+    except (TypeError, ValueError, RuntimeError):
+        strategy._note_runtime_progress("expired_order_cancel_failed")
 
 
 def mark_condition_unready(

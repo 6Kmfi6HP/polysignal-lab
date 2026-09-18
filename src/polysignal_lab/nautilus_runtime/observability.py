@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from queue import Empty, Full, Queue
 from threading import Event, Thread
-from typing import Protocol
+from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
@@ -349,6 +349,14 @@ class ObservabilityService:
                 "components": [c.as_dict() for c in snapshot.components],
             },
         )
+
+    def query_report_open_positions(self) -> list[Mapping[str, object]]:
+        store = self.store
+        query = getattr(store, "query_report_open_positions", None)
+        if not callable(query):
+            return []
+        rows = cast(list[Mapping[str, object]], query())
+        return rows
 
     def record_event(self, table: str, data: Mapping[str, object]) -> bool:
         self._event_count += 1

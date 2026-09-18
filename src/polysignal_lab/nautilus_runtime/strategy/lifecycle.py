@@ -4,9 +4,10 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 import logging
 import os
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.custom_data_publisher import framework_now
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -418,12 +419,12 @@ _ADAPTER_REFRESH_TIMEOUT_INTERVAL = timedelta(seconds=120)
 _ADAPTER_REFRESH_AT_BY_CLIENT: dict[str, datetime] = {}
 
 
-def _discover_new_conditions(
+def _discover_in_scope_markets(
     registry: MarketCatalog,
     assets: frozenset[str],
     timeframes: frozenset[str],
-) -> list[str]:
-    """Gamma discovery → registry updates → new conditions to subscribe."""
+) -> list[Market]:
+    """Gamma discovery → registry updates → in-scope markets."""
     from polysignal_lab.config import load_settings
     from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 
@@ -432,7 +433,7 @@ def _discover_new_conditions(
         settings.data.polymarket,
         settings.markets,
     ).discover_sync(include_next_periods=1, max_event_pages=2)
-    new_conditions: list[str] = []
+    in_scope: list[Market] = []
     for market in markets:
         asset = str(getattr(market, "asset", "")).upper()
         timeframe = str(getattr(market, "timeframe", "")).lower()
@@ -451,8 +452,20 @@ def _discover_new_conditions(
         # strategy's startup condition set is empty (registration delegates the
         # active set to universe events, and the rotation actor's timers do not
         # fire under poll()), so without this the fleet never subscribes.
-        new_conditions.append(market.condition_id)
-    return new_conditions
+        in_scope.append(market)
+    return in_scope
+
+
+def _discover_new_conditions(
+    registry: MarketCatalog,
+    assets: frozenset[str],
+    timeframes: frozenset[str],
+) -> list[str]:
+    """Compatibility wrapper: Gamma discovery → new condition ids."""
+    return [
+        market.condition_id
+        for market in _discover_in_scope_markets(registry, assets, timeframes)
+    ]
 
 
 def _polymarket_venue() -> object | None:
@@ -597,15 +610,7 @@ def _discover_and_subscribe_new_markets(
     *,
     now: datetime,
 ) -> None:
-    """Self-sufficient market rotation for live runs.
-
-    nautilus 1.231 actor timers (MarketRotation's expiry timer) do not fire
-    under ``LiveNode.poll()``, so expired slots are never rotated out and new
-    windows never enter the active set — the strategy eventually has zero
-    active conditions and goes dark. Discover current markets directly and
-    subscribe any condition the registry does not know yet, throttled and
-    gated on the production POLYSIGNAL_MARKET_DISCOVERY opt-in.
-    """
+    """Discover current markets, subscribe new conditions, backfill resolution."""
     if os.environ.get("POLYSIGNAL_MARKET_DISCOVERY") != "1":
         return
     if not getattr(strategy, "_market_discovery_enabled", False):
@@ -620,7 +625,7 @@ def _discover_and_subscribe_new_markets(
     assets = getattr(strategy, "_subscription_assets", frozenset())
     timeframes = getattr(strategy, "_subscription_timeframes", frozenset())
     try:
-        new_conditions = _discover_new_conditions(registry, assets, timeframes)
+        markets = _discover_in_scope_markets(registry, assets, timeframes)
     except Exception:
         logger.warning(
             "market_discovery_error",
@@ -630,6 +635,7 @@ def _discover_and_subscribe_new_markets(
             exc_info=True,
         )
         return
+    new_conditions = [market.condition_id for market in markets]
     if not new_conditions:
         _log_market_discovery_empty(strategy)
         return
@@ -779,6 +785,21 @@ def _ready_condition_stalled(
     )
 
 
+def _reconcile_open_positions(
+    strategy: _LifecycleStrategy,
+    *,
+    now: datetime,
+) -> None:
+    # Local import avoids the native_strategy <-> lifecycle <-> strategy
+    # package import cycle on basedpyright's symbol map.
+    from polysignal_lab.nautilus_runtime.strategy import resolution_settlement
+
+    resolution_settlement.resolve_open_positions(
+        cast(Any, strategy),
+        now=now,
+    )
+
+
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
@@ -794,6 +815,10 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
     # Self-sufficient market rotation first: nautilus 1.231 actor timers do not
     # fire under poll(), so without this the active set never gains new windows.
     _discover_and_subscribe_new_markets(strategy, now=now)
+    # Resolution reporting is final source of truth and must not depend on
+    # active discovery: closed markets are no longer active and historical
+    # condition ids may already be absent from the registry.
+    _reconcile_open_positions(strategy, now=now)
     # Phase 2 of any deferred refresh: restore drains from a prior turn so the
     # DataEngine had a chance to tear down the old wire subscription before the
     # re-subscribe is enqueued (issue69: same-turn drain+restore is a wire

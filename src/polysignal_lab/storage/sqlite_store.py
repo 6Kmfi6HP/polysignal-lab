@@ -441,6 +441,7 @@ class SQLiteStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self.migrate()
+        self.reconcile_report_position_closure()
 
     def _connect_with_retry(
         self,
@@ -1151,7 +1152,7 @@ class SQLiteStore:
         result_id = str(p["report_result_id"])
         p["report_result_id"] = result_id
         with self._lock, self._conn:
-            return self._insert_idempotent(
+            created = self._insert_idempotent(
                 "report_results",
                 "report_result_id",
                 result_id,
@@ -1182,6 +1183,82 @@ class SQLiteStore:
                     self._json(p),
                 ),
             )
+            self._close_report_position_locked(
+                str(p["report_position_id"]),
+                closed_at=str(p["closed_at"]),
+            )
+            return created
+
+    def _close_report_position_locked(
+        self,
+        report_position_id: str,
+        *,
+        closed_at: str = "",
+    ) -> None:
+        """Close a report position in place; caller must hold ``_lock``/``_conn``.
+
+        Patches the stored payload to ``status=CLOSED``/``is_closed=True`` and fills
+        ``closed_at`` only when blank (never overwrites an existing value). Single
+        direction OPEN -> CLOSED; a CLOSED (or missing) row is a no-op, so the call
+        is safe for duplicate results and report-only rows alike.
+        """
+        row = self._conn.execute(
+            "SELECT payload_json FROM report_positions WHERE report_position_id=?",
+            (report_position_id,),
+        ).fetchone()
+        if row is None:
+            return
+        payload = _payload_json(row)
+        if not isinstance(payload, dict):
+            return
+        payload["status"] = PositionStatus.CLOSED.value
+        payload["is_closed"] = True
+        if not payload.get("closed_at") and closed_at:
+            payload["closed_at"] = closed_at
+        self._conn.execute(
+            "UPDATE report_positions SET status=?, payload_json=? "
+            "WHERE report_position_id=? AND status=?",
+            (
+                PositionStatus.CLOSED.value,
+                self._json(payload),
+                report_position_id,
+                PositionStatus.OPEN.value,
+            ),
+        )
+
+    def reconcile_report_position_closure(self) -> int:
+        """Drain report positions stuck OPEN that already have a ``report_results`` row.
+
+        Runs at store init for the read-write connection. Holds ``_lock``/``_conn``
+        and returns the number of positions transitioned OPEN -> CLOSED.
+        """
+        with self._lock, self._conn:
+            result_closed_at: dict[str, str] = {}
+            for row in self._conn.execute(
+                "SELECT payload_json FROM report_results"
+            ).fetchall():
+                payload = _payload_json(row)
+                if not isinstance(payload, dict):
+                    continue
+                position_id = payload.get("report_position_id")
+                if position_id:
+                    result_closed_at[str(position_id)] = str(
+                        payload.get("closed_at") or ""
+                    )
+            closed = 0
+            open_rows = self._conn.execute(
+                "SELECT report_position_id FROM report_positions WHERE status=?",
+                (PositionStatus.OPEN.value,),
+            ).fetchall()
+            for open_row in open_rows:
+                position_id = str(open_row["report_position_id"])
+                if position_id in result_closed_at:
+                    self._close_report_position_locked(
+                        position_id,
+                        closed_at=result_closed_at[position_id],
+                    )
+                    closed += 1
+            return closed
 
     def insert_report_account_snapshot(self, snapshot: Any) -> None:
         p = to_jsonable(snapshot)

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from enum import Enum
 from queue import Empty, Queue
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from polysignal_lab.app.services.persistence_service import telemetry_retention_policy
 from polysignal_lab.domain.signal import SignalCandidate
@@ -175,6 +175,13 @@ class NautilusEventStoreAdapter:
 
     def _insert_strategy_status(self, payload: dict[str, object]) -> object:
         return self.persistence.insert_strategy_status(payload)
+
+    def query_report_open_positions(self) -> list[Mapping[str, object]]:
+        query = getattr(self.persistence, "query_report_open_positions", None)
+        if not callable(query):
+            return []
+        rows = cast(list[Mapping[str, object]], query())
+        return rows
 
     def insert_json(
         self,
